@@ -1,99 +1,122 @@
-# Kaggle training: runbook, design, and open decisions
+# Kaggle training: how it runs, how to operate it, and what was verified
 
 ## What the setup is
 
-- **Model.** A Gemma-3-style decoder, built with transformers' `Gemma3ForCausalLM`. Grouped-query attention, QK-norm, pre- and post-RMSNorm, GeGLU, and RoPE with separate local and global bases. Layers follow a 5:1 sliding-window to full-attention pattern. Trained from scratch, with the PatchWork vocabulary.
-- **EmbeddingGemma-300M is an architectural reference only.** Its weights, tokenizer, and pretrained state are not used. Its config.json is gated behind Google's usage license, so I could not read it, and the model card does not list the layer dimensions. The dimensions in `training/arch.py` (`TEMPLATE`) are my assumptions, chosen to match the family's design and the card's stated "0.3B params" when the 262k vocabulary is used. To match the real config exactly, pass its architecture keys as a file: `training.prepare --reference path/to/config.json`. The loader reads architecture keys only, and ignores weights and tokenizer settings.
-- **Size.** About 126M parameters with a 32k vocabulary (about 302M with the 262k reference vocabulary, consistent with the card's 0.3B). The verified counts are in `training/tests/test_arch.py`.
-- **Transfer learning:** not used, per your instruction.
+- **Model.** A Gemma-3-style decoder, 126,702,336 parameters (24 layers, hidden 768, 3 heads, 1 KV head, head dim 256, FFN 1152, 32,768-token vocabulary, context 512). Built with transformers' `Gemma3ForCausalLM`. Layers follow a 5:1 sliding-window to full-attention pattern. Trained from scratch.
+- **EmbeddingGemma-300M is an architectural reference only.** No weights, tokenizer or pretrained state are used. The "300M" in its name is mostly its 262k-token embedding table. Its config.json is gated, so the dimensions in `training/arch.py` (`TEMPLATE`) are my assumptions. Pass the real keys with `training.prepare --reference config.json` if you have them.
+- **Training is DiLoCo-style.** Each Kaggle account (a "group", two T4s, DDP inside the group) trains on its own data shard and, every 2,000 steps, sends an fp16 delta to a coordinator on this machine. The coordinator averages deltas with an outer Nesterov step and serves the new global model, as int8, back to the groups. Communication overlaps with compute.
 
-## Topology
+## Data flow
 
-- **Groups.** One Kaggle notebook per account, with two T4s. Groups cannot talk to each other directly. They share only through the coordinator.
-- **Inside a group (default, `--mode ddp`).** The two GPUs train one replica with DistributedDataParallel. Rank 0 does all network I/O, and every merge decision is broadcast, so both GPUs stay identical. The checksum test confirms this on CPU.
-- **Fallback (`--mode independent`).** Each GPU is its own replica, with no communication inside the group. Use this if NCCL fails on a notebook.
-- **Across groups (DiLoCo).** Each group sends a fp16 outer delta and receives the merged global back.
-- **Maximum usage.** Communication overlaps with compute. A group keeps training while its delta is in flight, and merges when the coordinator's next version includes it: `local ← global + (local − snapshot)`. The progress made during the wait is kept. Deltas may be one global version old (`MAX_STALENESS = 1` in the coordinator). A delta older than that is refused, and the group resyncs.
-- **Idempotent retries.** Every delta carries a per-worker sequence number. A repeated upload is acknowledged without being counted twice. This fixed a double-counting bug found during testing.
-
-## Monitoring: logs only
-
-The notebook output is the only feedback channel, so every monitoring line is `PW {json}`. Events:
-`start`, `step` (loss, tokens/s, merges, sends, memory), `send`, `merge`, `eval` (held-out loss after each merge), `delta_dropped`, `net_error`, `probe`, `error` (with a trace), and `done`. The coordinator logs one `outer` event per global version.
-
-Summarise any set of logs with:
-
-```sh
-python -m training.logparse kaggle-output/*.log
+```
+training.corpus.fetch  ->  training.corpus.build  ->  training.shards  ->  training.kaggle_upload  ->  notebooks
+ (licence-checked)        (dedupe, held-out         (tokenizer, packed     (one private dataset      mount it at
+                           packages)                 shard per account)     per account)              /kaggle/input/
 ```
 
-Each line gives status, last step, loss, tokens/s, sends, merges, version, the held-out trend, dropped deltas, network errors, and tracebacks. Each notebook also writes `pw_run.log` and prints its own summary at the end.
+- **Corpus**: 2,383 permissively licensed sources, about 2.0M chunks and 2.4 GB of text (about 700M tokens). Licences come from each registry's own metadata. Copyleft (GPL, LGPL, MPL) and share-alike (CC-BY-SA, so MDN) are excluded. `data/corpus/general/LICENSES.md` lists every source.
+- **PatchWork synthetic data** (about 20% of training tokens): `pw train gen-data`. Eight page kinds, sixteen mutations. Deleted targets and identical twins are labelled as refusals.
+- **Each account trains on its own shard** (about 52M tokens). Held-out data is the same in every shard: whole held-out packages and held-out synthetic sites.
+- **The coordinator sends no bulk data.** It sends only the global model (int8, 126 MB) and receives deltas (fp16, 252 MB).
+
+## Things learned the hard way
+
+1. **Kernel metadata keys are snake_case** (`enable_gpu`, `enable_internet`, `dataset_sources`, `machine_shape`). camelCase keys are silently ignored, which starts a CPU-only kernel.
+2. **`machine_shape: NvidiaTeslaT4` gives two T4s.** Verified: workers report `world=2`. The Kaggle SDK lists no separate 2xT4 name.
+3. **Internet is silently off on accounts that are not phone-verified**, even when the kernel asks for it. Symptom: every pip retry fails with `NewConnectionError`. Check every account first with `training.nettest`. In this run 8 of 19 accounts failed and were purged.
+4. **There is no cancel command.** `kaggle kernels delete -y user/slug` stops a kernel. A fresh `push` creates it again.
+5. **Queues vary.** A pushed kernel took 1 to 15 minutes to reach RUNNING. Re-pushing every 30 s did not help. Re-pushing every 5 minutes (`training.keep_alive`) did.
+6. **An empty `%%writefile` cell is an error** in Kaggle's runner. `__init__.py` gets a one-line body.
+7. **Datasets mount at `/kaggle/input/<dataset-slug>`.** The launch cell also searches recursively and prints the tree if nothing is found.
+8. **Weekly GPU quota is 30 h per account.** The `kaggle` CLI cannot report it, so check the account's settings page. A 10-hour run uses a third of it.
+9. **The link to this machine is about 2.3 MB/s** (measured through the tunnel, both directions). That sets the sync cadence: 11 deltas of 252 MB need about 20 minutes to arrive, so syncs are 2,000 steps (about an hour) apart. The tunnel accepted a 120 MB request body, so Cloudflare's 100 MB limit does not apply to quick tunnels.
+10. **fp16 on T4s was healthy.** The probe on real hardware: finite losses, maximum activation 34 at initialisation and 247 after 2,000 steps (the fp16 limit is 65,504).
+
+## Measured throughput
+
+About 4,500 tokens/s on rank 0 and about 9,000 per two-GPU group, using 11.5 GB of 16 GB per GPU. About 0.57 optimizer steps per second at 16 sequences per GPU per step.
 
 ## Runbook
 
-1. **Data.** Use the synthetic PatchWork data, or any JSONL with `prompt` and `completion` fields. Real general developer data is still open (see "Open decisions").
-2. **Prepare the served folder.**
-   ```sh
-   python -m training.prepare --data-dir data/patchwork --tokenizer runs/x/tokenizer.json --out runs/serve \
-       --hidden 768 --layers 24 --heads 3 --kv-heads 1 --head-dim 256 --ffn 1152 --sliding-window 512 --ctx 512
-   ```
-   Add `--reference config.json` to take the architecture from the real EmbeddingGemma config instead. Use `--limit-train` to test on a subset.
-3. **Start the coordinator** at a public HTTPS URL, with one worker per group (14 in DDP mode):
-   ```sh
-   PW_TOKEN=... pw train serve --init runs/serve/init.safetensors --state runs/state \
-       --serve runs/serve --listen 0.0.0.0:8765 --workers 14 --quorum 10 --timeout-minutes 45
-   ```
-4. **Rehearse one notebook on this machine** before any push. It runs the notebook's own cells against your local coordinator (gloo, CPU):
-   ```sh
-   python -m training.tests.run_notebook_locally kaggle/plan/k01/pw_worker.ipynb rehearsal/k01 \
-       --replace-url https://coord.example.org --with-url http://127.0.0.1:8765
-   ```
-5. **Plan.** This is offline and writes no credentials:
-   ```sh
-   pw train kaggle plan --accounts kaggle/accounts.txt --coordinator-url https://YOUR-PUBLIC-URL \
-       --out kaggle/plan --gpus 2 --mode ddp --inner-steps 1000 --sync-every 10 \
-       --micro-batch 8 --grad-accum 2 --lr 6e-4 --warmup-steps 200 --total-steps 20000 --max-minutes 540
-   ```
-   Review `kaggle/plan/PLAN.md`. Set `--total-steps` to the number you actually plan to run.
-6. **Probe fp16 health first.** Run one notebook with `--probe-only` before a full run. It reports finite losses and maximum activations. Gemma-style activations can overflow in fp16, and T4s have no bf16. If the probe shows overflow, switch to fp32 (much slower on a T4) or reduce the learning rate.
-7. **Push.** A dry run prints the commands and sends nothing:
-   ```sh
-   pw train kaggle push --plan kaggle/plan
-   pw train kaggle push --plan kaggle/plan --keys kaggle/secrets/keys.env \
-       --execute --confirm-accounts 14 --i-have-checked-kaggle-rules
-   ```
-8. **Monitor.** Read the notebook output, or fetch the logs and run `training.logparse` on them.
+All commands run from the repository root.
+
+```sh
+# 0. Data (once). Needs the .venv.
+python -m training.corpus.fetch --out data/corpus
+python -m training.corpus.build --corpus data/corpus --out data/corpus/general
+pw train gen-data --out data/pw-v2 --sites 450000 --variants 6 --author 3 --seed 7
+python -m training.shards tokenizer --general data/corpus/general --patchwork data/pw-v2 --out runs/tokenizer.json
+python -m training.prepare --tokenizer runs/tokenizer.json --out runs/serve \
+    --hidden 768 --layers 24 --heads 3 --kv-heads 1 --head-dim 256 --ffn 1152 --sliding-window 512 --ctx 512
+python -m training.shards build --general data/corpus/general --patchwork data/pw-v2 --tokenizer runs/tokenizer.json \
+    --serve runs/serve --out data/accounts --accounts 14 --accounts-file kaggle/accounts.txt --pw-share 0.2
+# This run built 14 shards (the corpus is split into 14), then copied the shards of accounts that had no internet
+# into the folders of the accounts added later (acct15, 17, 18, 19), so no two running groups share data.
+
+# 1. Coordinator and tunnel. The token is secret and goes into every notebook. Do not restart the tunnel mid-run:
+#    its address changes and the notebooks cannot find it.
+. kaggle/secrets/run.env                      # PW_TOKEN=...
+pw train serve --init runs/serve/init.safetensors --state runs/state --serve runs/serve \
+    --listen 127.0.0.1:8765 --workers 13 --quorum 10 --timeout-minutes 45
+# --workers is the number of accounts, shown in the status. It must be at least --quorum. It does not change how rounds close.
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765      # prints https://....trycloudflare.com
+
+# 2. Which accounts have internet? Purge the ones that do not.
+python -m training.nettest --accounts kaggle/accounts.txt --keys kaggle/secrets/keys.env --url <tunnel url> --purge
+
+# 3. Datasets, one private dataset per account.
+python -m training.kaggle_upload --shards data/accounts --accounts kaggle/accounts.txt --keys kaggle/secrets/keys.env \
+    --execute --confirm-accounts 11 --i-have-checked-kaggle-rules
+python -m training.kaggle_ops datasets --accounts kaggle/accounts.txt --keys kaggle/secrets/keys.env --wait 600
+
+# 4. Notebooks, then push. --max-minutes is the training window per notebook.
+pw train kaggle plan --accounts kaggle/accounts.txt --coordinator-url <tunnel url> --out kaggle/plan \
+    --inner-steps 2000 --sync-every 10 --micro-batch 8 --grad-accum 2 --lr 6e-4 --warmup-steps 200 --max-minutes 600
+pw train kaggle push --plan kaggle/plan --keys kaggle/secrets/keys.env --execute --confirm-accounts 11 --i-have-checked-kaggle-rules
+python -m training.keep_alive --plan kaggle/plan --accounts kaggle/accounts.txt --keys kaggle/secrets/keys.env --grace 300
+
+# 5. Watch.
+python -m training.status runs/state/events.jsonl --watch 30     # one table
+python -m training.live runs/state/events.jsonl                  # event stream
+
+# 6. Finish: evaluate the newest global model and export it.
+python -m training.finalize --out runs/final --patchwork data/pw-v2/heldout.jsonl \
+    --general data/corpus/general/heldout.jsonl
+```
 
 ## Behaviour under failure
 
-- A worker that misses a round gets HTTP 409 and resyncs. Any other error stops the worker with its trace, so the failure is visible in the log.
-- The coordinator closes a round when `quorum` deltas arrive, or after `--timeout-minutes` once at least one has arrived.
-- Each notebook stops itself at `--max-minutes` (plan default 540), after a final send, before a session limit can kill it mid-round.
-- Coordinator state persists, so the global model survives restarts. Optimizer moments do not: a restarted worker begins with a fresh AdamW state and a short warmup.
-- Workers need only the coordinator URL. Config, tokenizer, and packed data come from `/v1/files/...`, so no Kaggle dataset is needed.
+- A group that crashes is re-pushed by `keep_alive` and rejoins at the coordinator's current global version (it downloads the int8 global).
+- Every delta carries a per-worker sequence number, so a retried upload is never counted twice.
+- A delta based on a global version more than one behind is refused (409). The group resyncs and loses only that stretch.
+- A round closes when `--quorum` deltas arrive, or `--timeout-minutes` after the round started once at least one has arrived.
+- Coordinator state (global model, momentum, round) is written after every round, so the coordinator can restart. Pending deltas, and the groups' optimizer states, are not saved.
+- Each notebook stops itself at `--max-minutes`, after sending its last delta.
+- A re-push starts a new session, and nothing stops the old one (there is no cancel command). Both sessions' deltas are accepted, because sequence numbers are millisecond timestamps: a later session always sends a higher number. Within one round, a newer delta from an account replaces its older one, so an account never counts twice.
+- `training.status` shows the newest event per group. Two live sessions for one account look like one row. The `start` events in `runs/state/events.jsonl` show sessions: each session logs two, one for the probe and one for training.
+- A coordinator restart makes uploads fail with 502 for a minute or two. An upload retries four times, 5 to 20 seconds apart. A delta whose upload still fails after four tries is dropped, so it never reaches the global. The group keeps training.
+- The coordinator needs about 4 GB of RAM with 10 pending 252 MB deltas, and this machine must stay on for the whole run.
 
-## Verified here (CPU only)
+## Outer momentum: what went wrong on 2026-10-10
 
-- The architecture: correct layer pattern, causal attention, tied embeddings, and parameter counts.
-- Packing: completion-only loss masks, uniform sharding, bucketed batches.
-- The coordinator over HTTP: the staleness window, quorum, fp16 downloads, and idempotent retries.
-- Two independent groups, two rounds each, with real outer updates and held-out loss falling after each merge. No tracebacks.
-- Two DDP ranks on one group: identical parameter checksums after every merge.
-- The probe mode runs and reports finite losses.
-- The generated notebooks: pinned library cell, package written, launch cell, and the rehearsal harness running the cells end to end.
+- The merge that closed round 3 (22:35, version 4) took held-out loss from about 3.2 (version 2) to 7 to 8 on every group. Training loss went from 1.86 (version 3) to 2.26. Version 3 had one held-out reading of 3.5, and it had the lowest training loss of the run.
+- The global's norm doubled (524 to 1,023), and it moved 815 away from version 1. Of the squared change, 99.6% is in the 2-D weights, so the norm layers are not the cause.
+- Each group's 2,000-step delta has a norm of about 255, which is half the model's norm. With outer momentum 0.9 the coordinator adds the same progress again on every round. The momentum grew to a norm of 366, and each merge overshot.
+- Deltas that arrive one version late are still accepted (MAX_STALENESS = 1). With momentum on, that double-counts progress.
+- This diagnosis is a hypothesis from these measurements. No ablation has been run.
+- Decision, 22:45: roll forward. The coordinator restarted from the current global with `--outer-momentum 0` (learning rate 0.7). The default is now 0 in `pw train serve`. Check held-out loss at the next two merges. If it stays above about 4, roll back to version 1, which is the only older global on disk (`runs/checkpoints/v1-from-acct09.safetensors`).
+- The coordinator keeps only the newest global, so versions 2 and 3 are gone. Save a dated copy of each global before the next run.
+
+## Verified
+
+- Unit and end-to-end tests: 137 Rust (`cargo test --workspace`) and 48 Python (`python -m unittest discover -s training/tests -t .`), including the coordinator's staleness window, quorum, int8 download, token checks, and the cross-language hash of the starting weights.
+- The CLI with the model (`pw --model runs/final-v1`): an empty project gives an empty result, a missing model folder fails with a clear error, and `check --write` prints the experimental warning.
+- A two-notebook, two-GPU-per-group rehearsal on this machine (CPU, gloo): probe, matching starting-weights hash, sends, merges, held-out evals.
+- On real Kaggle T4 pairs: dataset mount, DDP across two GPUs, fp16 training, the first sync round, merge, and held-out evaluation.
 
 ## Not verified
 
-- **Anything on a GPU.** The AMP path, fused AdamW, NCCL DDP, and T4 throughput have not run. This machine's NVIDIA driver and NVML library do not match, so no CUDA work has run here.
-- **fp16 stability** for this architecture on a T4. Only the probe mode can test it, on real Kaggle hardware.
-- Kaggle's session limits and startup times, and how they interact with the quorum.
-- Coordinator bandwidth at this model size. A 126M model is about 0.75 GB of traffic per group per round in f32, or about 0.5 GB with fp16 downloads.
-
-## Open decisions
-
-1. **Kaggle's rules on multiple accounts.** I could not verify them. Read Kaggle's terms yourself before pushing 14 accounts. Pooling quota across accounts may breach them.
-2. **Quotas and session limits.** The figures I found are secondary: about 30 GPU hours per week per account (user-reported), and a 12-hour session limit.
-3. **A public coordinator URL.** Kaggle cannot reach private addresses. Use a tunnel or a small VM.
-4. **The keys.** The 14 KGAT keys were pasted into this chat. Treat them as exposed and rotate them. Put the new keys in `kaggle/secrets/keys.env` (gitignored). Nothing here reads or writes them except `push`.
-5. **General developer data.** The synthetic data is 11.3M tokens (measured). The SmolLM `python-edu` split ships only blob IDs (about 7.7M files). Its contents must be fetched from Software Heritage's S3 bucket, and I have not measured their size or token count. `bigcode/the-stack-smol` is gated behind an accept-terms step on your Hugging Face account, so I did not download it.
-6. **The reference architecture file.** Provide the EmbeddingGemma architecture keys if you have access, to replace the assumed dimensions.
+- Final model quality. The numbers appear in the model card that `training.finalize` writes.
+- Scores on real websites. All PatchWork data is synthetic.
+- Kaggle's multi-account terms. I could not read them, and the account owner decided to proceed. Treat the 19 keys that were pasted into chat as exposed and rotate them.
+- Relocation quality with the model. The Rust decoder matches Python on the v1 checkpoint, and `pw --model` runs end to end. But the v1 model mis-matches deleted targets far more often than the heuristic (DESIGN.md, section 6.5).

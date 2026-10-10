@@ -10,3 +10,8 @@ kaggle/nettest/
 kaggle/plan2/
 kaggle/plan3/
 kaggle/plan4/
+kaggle/plan5/
+kaggle/plan6/
+# Plan folders hold the notebooks that embed the coordinator token. Never commit them.
+kaggle/plan*/
+.~lock.*#
