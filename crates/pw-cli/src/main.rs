@@ -126,7 +126,56 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum KaggleCmd {
+    /// Write one kernel folder per account (offline; no credentials are written)
+    Plan {
+        /// Accounts file: one `alias,username` per line
+        #[arg(long)]
+        accounts: PathBuf,
+        /// Public URL of the coordinator (Kaggle cannot reach private addresses)
+        #[arg(long)]
+        coordinator_url: String,
+        #[arg(long, default_value = "kaggle/plan")]
+        out: PathBuf,
+        #[arg(long, default_value_t = 2)]
+        gpus: usize,
+        #[arg(long, default_value_t = 500)]
+        inner_steps: usize,
+        #[arg(long, default_value_t = 40)]
+        rounds: usize,
+        #[arg(long, default_value_t = 32)]
+        batch: usize,
+        #[arg(long, default_value_t = 540.0)]
+        max_minutes: f64,
+        #[arg(long, default_value = "training")]
+        training_dir: PathBuf,
+    },
+    /// Push the plan to Kaggle. Dry run unless every confirmation flag is given
+    Push {
+        #[arg(long, default_value = "kaggle/plan")]
+        plan: PathBuf,
+        /// Keys file with `alias=KEY` lines (kept out of version control)
+        #[arg(long, default_value = "kaggle/secrets/keys.env")]
+        keys: PathBuf,
+        /// Actually push. Without this flag the command only prints what it would run
+        #[arg(long)]
+        execute: bool,
+        /// Must equal the number of accounts in the plan
+        #[arg(long)]
+        confirm_accounts: Option<usize>,
+        /// Confirms you have checked Kaggle's terms and your quotas for these accounts
+        #[arg(long)]
+        i_have_checked_kaggle_rules: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum TrainCmd {
+    /// Distributed training on Kaggle: plan and push one notebook per account
+    Kaggle {
+        #[command(subcommand)]
+        cmd: KaggleCmd,
+    },
     /// Held-out benchmark for re-anchoring: heuristic vs selector-only, on unseen synthetic sites
     Bench {
         #[arg(long, default_value_t = 200)]
@@ -435,6 +484,39 @@ async fn main() -> Result<ExitCode> {
             browser::edit(&url, &project.root, &author).await?;
         }
         Cmd::Train { cmd } => match cmd {
+            TrainCmd::Kaggle { cmd } => match cmd {
+                KaggleCmd::Plan { accounts, coordinator_url, out, gpus, inner_steps, rounds, batch, max_minutes, training_dir } => {
+                    let text = std::fs::read_to_string(&accounts).with_context(|| format!("reading {}", accounts.display()))?;
+                    let cfg = pw_train::kaggle::PlanConfig {
+                        coordinator_url,
+                        accounts: pw_train::kaggle::parse_accounts(&text)?,
+                        gpus_per_account: gpus,
+                        inner_steps,
+                        rounds,
+                        batch,
+                        max_minutes,
+                        training_dir,
+                    };
+                    let plans = pw_train::kaggle::write_plan(&cfg, &out)?;
+                    println!("planned {} notebooks ({} workers) in {}", plans.len(), plans.len() * gpus, out.display());
+                    println!("nothing was sent to Kaggle. Review {}/PLAN.md, then run `pw train kaggle push`.", out.display());
+                }
+                KaggleCmd::Push { plan, keys, execute, confirm_accounts, i_have_checked_kaggle_rules } => {
+                    let plans = pw_train::kaggle::load_plans(&plan)?;
+                    if execute {
+                        pw_train::kaggle::push_allowed(plans.len(), confirm_accounts.unwrap_or(0), i_have_checked_kaggle_rules)?;
+                        let text = std::fs::read_to_string(&keys).with_context(|| format!("reading {}", keys.display()))?;
+                        let map = pw_train::kaggle::parse_keys(&text)?;
+                        pw_train::kaggle::push(&plans, &map, false)?;
+                    } else {
+                        println!("dry run: {} kernels would be pushed. Add --execute with the confirmations to push.", plans.len());
+                        // Dry run prints the commands and never reads the keys file.
+                        let placeholder: std::collections::BTreeMap<String, String> =
+                            plans.iter().map(|p| (p.alias.clone(), "<from keys file>".to_string())).collect();
+                        pw_train::kaggle::push(&plans, &placeholder, true)?;
+                    }
+                }
+            },
             TrainCmd::Bench { sites, variants, seed, json } => {
                 let r = pw_train::bench::run(sites, variants, seed)?;
                 if json {

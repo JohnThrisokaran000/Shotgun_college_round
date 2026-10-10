@@ -48,7 +48,7 @@ def fetch_global(coord: str, token: str | None) -> dict[str, torch.Tensor]:
 
 
 def post_delta(coord: str, token: str | None, worker: str, round_no: int, delta: dict[str, torch.Tensor]) -> int:
-    body = st_save({k: v.half().contiguous() for k, v in delta.items()})
+    body = st_save({k: v.detach().half().cpu().contiguous() for k, v in delta.items()})
     try:
         http("POST", f"{coord}/v1/delta?worker={worker}&round={round_no}", token, data=body)
         return 202
@@ -99,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--poll-seconds", type=float, default=10.0)
     p.add_argument("--round-timeout-minutes", type=float, default=60.0)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", default="auto", help="cuda, cpu, or auto (cuda when present)")
     args = p.parse_args(argv)
 
     token = os.environ.get("PW_TOKEN") or None
@@ -110,8 +111,11 @@ def main(argv: list[str] | None = None) -> int:
     download_files(coord, token, args.work_dir)
     from transformers import LlamaConfig, LlamaForCausalLM
 
+    device = tr.pick_device(args.device)
+    use_amp = device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda") if use_amp else None
     config = LlamaConfig.from_json_file(str(args.work_dir / "config.json"))
-    model = LlamaForCausalLM(config)
+    model = LlamaForCausalLM(config).to(device)
     tok = pwdata.load_tokenizer(args.work_dir / "tokenizer.json")
     rows = list(pwdata.read_jsonl(args.work_dir / "train.jsonl"))
     items, dropped = pwdata.encode_rows(tok, rows, args.max_len)
@@ -132,7 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         model.load_state_dict(global_state, strict=False)
         base = {k: v.detach().clone() for k, v in model.named_parameters()}
         loss = tr.train_loop(model, optimizer, shard, args.inner_steps, args.batch, pad, args.lr, args.warmup,
-                             torch.device("cpu"), rng, start_step=inner_done, total_steps=total, log_every=0)
+                             device, rng, start_step=inner_done, total_steps=total, log_every=0,
+                             use_amp=use_amp, scaler=scaler)
         inner_done += args.inner_steps
         now = {k: v.detach() for k, v in model.named_parameters()}
         delta = {k: base[k] - now[k] for k in base}
