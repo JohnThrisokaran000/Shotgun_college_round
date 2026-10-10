@@ -180,9 +180,27 @@ pub fn load_snapshots(pairs: &[(String, PathBuf)]) -> Result<BTreeMap<String, Sn
     Ok(out)
 }
 
+/// The model, when the command was given `--model`. Loaded once per process.
+static MODEL: std::sync::OnceLock<pw_model::ModelChooser> = std::sync::OnceLock::new();
+
+/// Load the model for this process. Refuses a folder that does not load, so a typo cannot silently fall back.
+pub fn install_model(dir: &Path) -> Result<()> {
+    let model = pw_model::Model::load(dir).with_context(|| format!("loading the model in {}", dir.display()))?;
+    let accept = RelocateConfig::default().model_accept;
+    let _ = MODEL.set(pw_model::ModelChooser::new(model, accept));
+    Ok(())
+}
+
 pub fn relocate_one(patch: &Patch, snap: &Snapshot) -> Result<Outcome> {
     let cfg = RelocateConfig::default();
-    Ok(relocate::relocate(&patch.anchor, snap, &Heuristic { cfg }, &cfg)?)
+    let heuristic = Heuristic { cfg };
+    match MODEL.get() {
+        Some(model) => {
+            let chooser = pw_model::ModelFirst { model, fallback: &heuristic };
+            Ok(relocate::relocate(&patch.anchor, snap, &chooser, &cfg)?)
+        }
+        None => Ok(relocate::relocate(&patch.anchor, snap, &heuristic, &cfg)?),
+    }
 }
 
 pub fn status_label(s: Status) -> &'static str {

@@ -26,6 +26,11 @@ struct Cli {
     /// Project directory (the one holding pw.toml)
     #[arg(long, global = true, default_value = ".")]
     project: PathBuf,
+    /// A trained PatchWork model folder (config.json, model.safetensors, tokenizer.json). When given, the model
+    /// decides relocations it is confident about, and the heuristic decides the rest. Experimental: on the
+    /// synthetic benchmark it mis-matched deleted targets more often than the heuristic (docs/DESIGN.md, section 6.5).
+    #[arg(long, global = true, value_name = "DIR")]
+    model: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -203,6 +208,13 @@ enum TrainCmd {
         variants: usize,
         #[arg(long, default_value_t = 7)]
         seed: u64,
+        /// Also score the trained model (an exported folder). Slower: the model runs on the CPU.
+        #[arg(long, value_name = "DIR")]
+        model: Option<PathBuf>,
+        /// Confidence bars to sweep, for example 0.5,0.8,0.95 (needs --model). The model is asked once per case,
+        /// and each bar is applied to the same answers.
+        #[arg(long, value_name = "BARS", value_delimiter = ',', requires = "model")]
+        accept: Vec<f64>,
         #[arg(long)]
         json: bool,
     },
@@ -229,7 +241,8 @@ enum TrainCmd {
         timeout_minutes: f64,
         #[arg(long, default_value_t = 0.7)]
         outer_lr: f32,
-        #[arg(long, default_value_t = 0.9)]
+        /// Outer Nesterov momentum. 0 is plain averaging. 0.9 (the DiLoCo value) overshot in our run.
+        #[arg(long, default_value_t = 0.0)]
         outer_momentum: f32,
     },
     /// Generate RELOCATE and AUTHOR training data and a held-out split
@@ -446,9 +459,61 @@ async fn cmd_verify(project: &Project, base: &str, channel: &str) -> Result<bool
     Ok(failed)
 }
 
+/// The benchmark at several confidence bars. The model's answers are the same at every bar. The bar decides
+/// whether an answer is applied.
+fn print_sweep(s: &pw_train::bench::Sweep) {
+    let r = &s.report;
+    let line = |name: &str, t: &pw_train::bench::Tally| {
+        println!(
+            "{name:<34} cases {:>6}  correct {:>6.1}%  wrong-match {:>6.2}%  abstain {:>6.1}%",
+            t.cases,
+            100.0 * t.accuracy(),
+            100.0 * t.wrong_rate(),
+            100.0 * t.abstain_rate()
+        )
+    };
+    println!("held-out sites {}, variants per site {}", r.sites, r.variants);
+    line("heuristic, target present", &r.present);
+    line("selector-only, target present", &r.selector_only_present);
+    line("heuristic, target deleted", &r.deleted);
+    line("selector-only, target deleted", &r.selector_only_deleted);
+    for (title, first) in [("model then heuristic (what --model does)", true), ("model alone", false)] {
+        println!("\n{title}");
+        println!("{:>6} {:>14} {:>13} {:>15} {:>14} {:>15}", "bar", "present correct", "present wrong", "present abstain", "deleted wrong", "deleted abstain");
+        for bar in &s.bars {
+            let (present, deleted) = if first {
+                (&bar.model.first_present, &bar.model.first_deleted)
+            } else {
+                (&bar.model.only_present, &bar.model.only_deleted)
+            };
+            println!(
+                "{:>6.3} {:>13.1}% {:>12.2}% {:>14.1}% {:>13.1}% {:>14.1}%",
+                bar.accept,
+                100.0 * present.accuracy(),
+                100.0 * present.wrong_rate(),
+                100.0 * present.abstain_rate(),
+                100.0 * deleted.wrong_rate(),
+                100.0 * deleted.abstain_rate()
+            );
+        }
+    }
+}
+
+/// Commands that rewrite patch files or publish relocated anchors. A model's relocation is only worth
+/// that once it has been checked, so these print a warning when `--model` is given.
+fn rewrites_or_publishes(cmd: &Cmd) -> bool {
+    matches!(cmd, Cmd::Check { write: true, .. } | Cmd::Release { accept_relocated: true, dry_run: false, .. })
+}
+
 #[tokio::main]
 async fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
+    if let Some(dir) = &cli.model {
+        project::install_model(dir)?;
+        if rewrites_or_publishes(&cli.cmd) {
+            eprintln!("warning: --model relocations are experimental (docs/DESIGN.md, section 6.5); review them before you publish");
+        }
+    }
     let root = cli.project.clone();
     match cli.cmd {
         Cmd::Init { name, upstream } => {
@@ -559,8 +624,25 @@ async fn main() -> Result<ExitCode> {
                     }
                 }
             },
-            TrainCmd::Bench { sites, variants, seed, json } => {
-                let r = pw_train::bench::run(sites, variants, seed)?;
+            TrainCmd::Bench { sites, variants, seed, model, accept, json } => {
+                let chooser = match model {
+                    Some(dir) => {
+                        let loaded = pw_model::Model::load(&dir).with_context(|| format!("loading {}", dir.display()))?;
+                        Some(pw_model::ModelChooser::new(loaded, pw_core::relocate::Config::default().model_accept))
+                    }
+                    None => None,
+                };
+                if !accept.is_empty() {
+                    let chooser = chooser.as_ref().context("--accept needs --model")?;
+                    let sweep = pw_train::bench::run_sweep(sites, variants, seed, chooser, &accept)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&sweep)?);
+                    } else {
+                        print_sweep(&sweep);
+                    }
+                    return Ok(ExitCode::SUCCESS);
+                }
+                let r = pw_train::bench::run_with_model(sites, variants, seed, chooser.as_ref())?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&r)?);
                 } else {
@@ -578,6 +660,12 @@ async fn main() -> Result<ExitCode> {
                     line("selector-only, target present", &r.selector_only_present);
                     line("heuristic, target deleted", &r.deleted);
                     line("selector-only, target deleted", &r.selector_only_deleted);
+                    if let Some(m) = &r.model {
+                        line("model alone, target present", &m.only_present);
+                        line("model alone, target deleted", &m.only_deleted);
+                        line("model then heuristic, present", &m.first_present);
+                        line("model then heuristic, deleted", &m.first_deleted);
+                    }
                     println!(
                         "wrong matches a text-identity assertion would catch: heuristic {}/{} (deleted) and {}/{} (present); selector-only {}/{} (deleted)",
                         r.deleted.wrong_caught_by_identity,
@@ -628,4 +716,25 @@ async fn main() -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_commands_that_rewrite_or_publish_warn_about_the_model() {
+        let check = |write| Cmd::Check { snapshots: vec![], write, json: false };
+        let release = |dry_run, accept_relocated| Cmd::Release {
+            channel: "production".into(),
+            snapshots: vec![],
+            dry_run,
+            accept_relocated,
+        };
+        assert!(rewrites_or_publishes(&check(true)));
+        assert!(!rewrites_or_publishes(&check(false)));
+        assert!(rewrites_or_publishes(&release(false, true)));
+        assert!(!rewrites_or_publishes(&release(true, true)), "a dry run publishes nothing");
+        assert!(!rewrites_or_publishes(&release(false, false)), "without accept_relocated, relocated patches are refused");
+    }
 }

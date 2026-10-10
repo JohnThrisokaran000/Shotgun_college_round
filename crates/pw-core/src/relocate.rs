@@ -63,7 +63,8 @@ impl Default for Config {
             heuristic_accept: 0.6,
             heuristic_margin: 0.15,
             context_min: 0.5,
-            model_accept: 0.8,
+            // Chosen on a development split (docs/DESIGN.md, section 6.5). 0.8 mis-matched 84% of deleted targets there.
+            model_accept: 0.99,
         }
     }
 }

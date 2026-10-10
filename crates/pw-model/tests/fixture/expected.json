@@ -1,0 +1,47 @@
+{
+ "prompt": "TASK: relocate\nTARGET: button \"Place order\" in: main > section\nCANDIDATES:\n[0] a | \"Add to cart\"\n[1] button | \"Place order\"\nANSWER: ",
+ "prompt_tokens": 45,
+ "greedy_text": "ecsecsecsecsproportionecsproportionproportion",
+ "greedy_tokens": [
+  29868,
+  29868,
+  29868,
+  29868,
+  27055,
+  29868,
+  27055,
+  27055
+ ],
+ "top5_index": [
+  29868,
+  11886,
+  18920,
+  24827,
+  22010
+ ],
+ "top5_logit": [
+  0.507066,
+  0.432737,
+  0.417441,
+  0.415335,
+  0.411182
+ ],
+ "logits_first16": [
+  0.0,
+  0.231125,
+  -0.033801,
+  -0.105867,
+  0.102314,
+  0.070413,
+  -0.145651,
+  0.153306,
+  -0.092645,
+  0.053513,
+  -0.123969,
+  0.079873,
+  0.006361,
+  0.075632,
+  0.010658,
+  -0.229993
+ ]
+}

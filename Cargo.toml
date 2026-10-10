@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pw-core", "crates/pw-proxy", "crates/pw-cli", "crates/pw-train"]
+members = ["crates/pw-core", "crates/pw-proxy", "crates/pw-model", "crates/pw-cli", "crates/pw-train"]
 
 [workspace.package]
 version = "0.1.0"
