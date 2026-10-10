@@ -167,13 +167,24 @@ async fn save_from_message(page: &Page, text: &str, root: &Path, author: &str) -
         .map(serde_json::from_value)
         .collect::<std::result::Result<_, _>>()
         .context("the editor sent an operation the DSL does not allow")?;
+    // Identity check: after a site update the patch must still land on an element with this text.
+    // It is the cheapest guard against a patch silently moving to a look-alike (see bench output).
+    let set_text = ops.iter().find_map(|op| match op {
+        Op::SetText { value } => Some(value.clone()),
+        _ => None,
+    });
+    let identity = set_text.or_else(|| Some(el.text.clone()).filter(|t| !t.is_empty()));
+    let mut assertions = vec![Assertion::Visible(true)];
+    if let Some(text) = identity {
+        assertions.push(Assertion::TextContains(text.chars().take(200).collect()));
+    }
     let mut patch = Patch {
         id: format!("edit-{}", now_secs()),
         author: author.into(),
         page: req.page.split('?').next().unwrap_or("/").to_string(),
         anchor: Anchor::from_element(el, &snap),
         ops,
-        assertions: vec![Assertion::Visible(true)],
+        assertions,
     };
     dsl::normalize(&mut patch)?;
     if !req.note.is_empty() {

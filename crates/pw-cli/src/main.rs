@@ -69,6 +69,10 @@ enum Cmd {
         snapshots: Vec<(String, PathBuf)>,
         #[arg(long)]
         dry_run: bool,
+        /// Allow patches that were relocated by the heuristic. Run `pw verify` on a preview
+        /// channel first: a relocation is only as good as its assertions.
+        #[arg(long)]
+        accept_relocated: bool,
     },
     /// Point a channel back to the previous release
     Rollback {
@@ -123,6 +127,43 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum TrainCmd {
+    /// Held-out benchmark for re-anchoring: heuristic vs selector-only, on unseen synthetic sites
+    Bench {
+        #[arg(long, default_value_t = 200)]
+        sites: usize,
+        #[arg(long, default_value_t = 6)]
+        variants: usize,
+        #[arg(long, default_value_t = 7)]
+        seed: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the distributed-training coordinator (workers send deltas, it averages and steps)
+    Serve {
+        /// init.safetensors written by `python -m training.init_model`
+        #[arg(long)]
+        init: PathBuf,
+        /// Where the global model and round state are kept between restarts
+        #[arg(long)]
+        state: PathBuf,
+        /// Directory served to workers at /v1/files/<name> (config, tokenizer, training rows)
+        #[arg(long)]
+        serve: Option<PathBuf>,
+        #[arg(long, default_value = "127.0.0.1:8765")]
+        listen: SocketAddr,
+        #[arg(long)]
+        workers: usize,
+        /// Deltas needed to close a round (default: all workers)
+        #[arg(long)]
+        quorum: Option<usize>,
+        /// A round with at least one delta closes after this long
+        #[arg(long, default_value_t = 30.0)]
+        timeout_minutes: f64,
+        #[arg(long, default_value_t = 0.7)]
+        outer_lr: f32,
+        #[arg(long, default_value_t = 0.9)]
+        outer_momentum: f32,
+    },
     /// Generate RELOCATE and AUTHOR training data and a held-out split
     GenData {
         #[arg(long, default_value = "data/patchwork")]
@@ -135,6 +176,9 @@ enum TrainCmd {
         author: usize,
         #[arg(long, default_value_t = 1)]
         seed: u64,
+        /// Share of RELOCATE examples labelled null (deleted targets)
+        #[arg(long, default_value_t = 0.15)]
+        null_fraction: f64,
     },
 }
 
@@ -231,7 +275,7 @@ fn cmd_merge(project: &Project, with: &PathBuf, pairs: &[(String, PathBuf)]) -> 
     Ok(hard)
 }
 
-async fn cmd_release(project: &Project, channel: &str, pairs: &[(String, PathBuf)], dry_run: bool) -> Result<()> {
+async fn cmd_release(project: &Project, channel: &str, pairs: &[(String, PathBuf)], dry_run: bool, accept_relocated: bool) -> Result<()> {
     let snaps = project::load_snapshots(pairs)?;
     let plan = project::plan_release(project, channel, &snaps)?;
     for id in &plan.relocated {
@@ -258,6 +302,13 @@ async fn cmd_release(project: &Project, channel: &str, pairs: &[(String, PathBuf
             println!("{channel} already serves this content as release {current}; nothing to do");
             return Ok(());
         }
+    }
+    if !plan.relocated.is_empty() && !accept_relocated && !dry_run {
+        bail!(
+            "release blocked: {} patch(es) were relocated by the heuristic ({}). Verify them on a preview channel with `pw verify`, then pass --accept-relocated",
+            plan.relocated.len(),
+            plan.relocated.join(", ")
+        );
     }
     if dry_run {
         println!("dry run: would publish release {} to {channel}", plan.manifest.id);
@@ -351,9 +402,9 @@ async fn main() -> Result<ExitCode> {
                 return Ok(ExitCode::from(1));
             }
         }
-        Cmd::Release { channel, snapshots, dry_run } => {
+        Cmd::Release { channel, snapshots, dry_run, accept_relocated } => {
             let project = Project::open(&root)?;
-            cmd_release(&project, &channel, &snapshots, dry_run).await?;
+            cmd_release(&project, &channel, &snapshots, dry_run, accept_relocated).await?;
         }
         Cmd::Rollback { channel } => cmd_rollback(&Project::open(&root)?, &channel)?,
         Cmd::Log { tail } => cmd_log(&Project::open(&root)?, tail)?,
@@ -384,13 +435,58 @@ async fn main() -> Result<ExitCode> {
             browser::edit(&url, &project.root, &author).await?;
         }
         Cmd::Train { cmd } => match cmd {
-            TrainCmd::GenData { out, sites, variants, author, seed } => {
+            TrainCmd::Bench { sites, variants, seed, json } => {
+                let r = pw_train::bench::run(sites, variants, seed)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&r)?);
+                } else {
+                    let line = |name: &str, t: &pw_train::bench::Tally| {
+                        println!(
+                            "{name:<34} cases {:>6}  correct {:>6.1}%  wrong-match {:>6.2}%  abstain {:>6.1}%",
+                            t.cases,
+                            100.0 * t.accuracy(),
+                            100.0 * t.wrong_rate(),
+                            100.0 * t.abstain_rate()
+                        )
+                    };
+                    println!("held-out sites {}, variants per site {}", r.sites, r.variants);
+                    line("heuristic, target present", &r.present);
+                    line("selector-only, target present", &r.selector_only_present);
+                    line("heuristic, target deleted", &r.deleted);
+                    line("selector-only, target deleted", &r.selector_only_deleted);
+                    println!(
+                        "wrong matches a text-identity assertion would catch: heuristic {}/{} (deleted) and {}/{} (present); selector-only {}/{} (deleted)",
+                        r.deleted.wrong_caught_by_identity,
+                        r.deleted.wrong_match,
+                        r.present.wrong_caught_by_identity,
+                        r.present.wrong_match,
+                        r.selector_only_deleted.wrong_caught_by_identity,
+                        r.selector_only_deleted.wrong_match
+                    );
+                }
+            }
+            TrainCmd::Serve { init, state, serve, listen, workers, quorum, timeout_minutes, outer_lr, outer_momentum } => {
+                let initial = pw_train::coordinator::parse_safetensors(&std::fs::read(&init).with_context(|| format!("reading {}", init.display()))?)?;
+                let cfg = pw_train::coordinator::Config {
+                    workers,
+                    quorum: quorum.unwrap_or(workers),
+                    timeout: std::time::Duration::from_secs_f64(timeout_minutes * 60.0),
+                    outer: pw_train::coordinator::OuterOpt { lr: outer_lr, momentum: outer_momentum },
+                    token: std::env::var("PW_TOKEN").ok().filter(|t| !t.is_empty()),
+                    state_dir: state,
+                    serve_dir: serve,
+                };
+                println!("coordinator on http://{listen} for {workers} workers, {} parameters", initial.len());
+                pw_train::coordinator::serve(cfg, initial, listen).await?;
+            }
+            TrainCmd::GenData { out, sites, variants, author, seed, null_fraction } => {
                 let cfg = pw_train::datagen::GenConfig {
                     seed,
                     sites,
                     variants_per_site: variants,
                     author_per_site: author,
                     heldout_every: 10,
+                    null_fraction,
                 };
                 let stats = pw_train::datagen::write_dataset(&out, &cfg)?;
                 println!("{}", serde_json::to_string_pretty(&stats)?);
