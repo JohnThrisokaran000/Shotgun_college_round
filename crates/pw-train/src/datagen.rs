@@ -39,6 +39,8 @@ pub struct Stats {
     pub sites: usize,
     pub relocate: usize,
     pub relocate_null: usize,
+    /// Refusals written because a twin of the target made the answer undecidable (a subset of relocate_null).
+    pub relocate_twin: usize,
     pub relocate_train: usize,
     pub relocate_heldout: usize,
     pub author: usize,
@@ -128,7 +130,10 @@ fn relocate_examples(
             continue;
         }
         let shown: Vec<(&Element, f64)> = candidates.iter().map(|(e, s)| (*e, *s)).collect();
-        let completion = if !variant.gold_present {
+        // A twin of the target looks the same and has no id, so nothing on the page picks one of them.
+        // The honest answer is a refusal, the same as a deleted target.
+        let twin = variant.mutations.contains(&synth::Mutation::AddTwin);
+        let completion = if !variant.gold_present || twin {
             stats.relocate_null += 1;
             "{\"match\": null}".to_string()
         } else {
@@ -152,11 +157,19 @@ struct Request {
     ops: Vec<Op>,
 }
 
-fn author_request(rng: &mut Rng, el: &Element) -> Request {
-    match rng.below(5) {
+/// One request of kind `which` (0..6): colour, text, hide, navigate, add class, remove class.
+fn single_request(rng: &mut Rng, el: &Element, which: usize) -> Request {
+    match which {
         0 => {
             let (word, hex) = *rng.pick(COLORS);
-            let phrasing = ["make it {w}", "change the background to {w}", "give this a {w} background", "color it {w}"][rng.below(4)];
+            let phrasing = [
+                "make it {w}",
+                "change the background to {w}",
+                "give this a {w} background",
+                "color it {w}",
+                "please make this {w}",
+                "turn it {w}",
+            ][rng.below(6)];
             Request {
                 text: phrasing.replace("{w}", word),
                 ops: vec![Op::SetStyle { prop: "background-color".into(), value: hex.into() }],
@@ -164,16 +177,16 @@ fn author_request(rng: &mut Rng, el: &Element) -> Request {
         }
         1 => {
             let t = *rng.pick(TEXTS);
-            let phrasing = ["change the text to \"{t}\"", "make it say {t}", "rename this to {t}"][rng.below(3)];
+            let phrasing = ["change the text to \"{t}\"", "make it say {t}", "rename this to {t}", "set the label to {t}"][rng.below(4)];
             Request { text: phrasing.replace("{t}", t), ops: vec![Op::SetText { value: t.into() }] }
         }
         2 => {
-            let phrasing = ["hide this", "hide this element", "make this disappear"][rng.below(3)];
+            let phrasing = ["hide this", "hide this element", "make this disappear", "please hide it"][rng.below(4)];
             Request { text: phrasing.into(), ops: vec![Op::Hide {}] }
         }
         3 => {
             let p = *rng.pick(PATHS);
-            let phrasing = ["send this to {p}", "make it open {p} when clicked"][rng.below(2)];
+            let phrasing = ["send this to {p}", "make it open {p} when clicked", "link this to {p}"][rng.below(3)];
             let op = if el.tag == "button" {
                 Op::SetAttr { name: "formaction".into(), value: p.into() }
             } else {
@@ -181,11 +194,32 @@ fn author_request(rng: &mut Rng, el: &Element) -> Request {
             };
             Request { text: phrasing.replace("{p}", p), ops: vec![op] }
         }
+        4 => {
+            let c = *rng.pick(CLASSES);
+            let phrasing = ["add the class {c}", "give it the {c} class"][rng.below(2)];
+            Request { text: phrasing.replace("{c}", c), ops: vec![Op::AddClass { name: c.into() }] }
+        }
         _ => {
             let c = *rng.pick(CLASSES);
-            Request { text: format!("add the class {c}"), ops: vec![Op::AddClass { name: c.into() }] }
+            Request { text: format!("remove the {c} class"), ops: vec![Op::RemoveClass { name: c.into() }] }
         }
     }
+}
+
+/// A request is one change, or (one time in five) two changes in one sentence.
+fn author_request(rng: &mut Rng, el: &Element) -> Request {
+    let first = rng.below(6);
+    let mut req = single_request(rng, el, first);
+    if rng.chance(0.2) {
+        let mut second = rng.below(6);
+        if second == first {
+            second = (second + 1) % 6;
+        }
+        let extra = single_request(rng, el, second);
+        req.text = format!("{} and {}", req.text, extra.text);
+        req.ops.extend(extra.ops);
+    }
+    req
 }
 
 /// One AUTHOR example: a target element and a plain-English request, with the DSL ops as the answer.
@@ -263,6 +297,7 @@ fn balance_nulls(examples: Vec<Example>, rng: &mut Rng, null_fraction: f64) -> V
 fn recount(examples: &[Example], stats: &mut Stats) {
     stats.relocate = 0;
     stats.relocate_null = 0;
+    stats.relocate_twin = 0;
     stats.relocate_train = 0;
     stats.relocate_heldout = 0;
     stats.author = 0;
@@ -274,6 +309,7 @@ fn recount(examples: &[Example], stats: &mut Stats) {
             "relocate" => {
                 stats.relocate += 1;
                 stats.relocate_null += usize::from(is_null_label(e));
+                stats.relocate_twin += usize::from(is_null_label(e) && e.kind.contains("add-twin"));
                 if held { stats.relocate_heldout += 1 } else { stats.relocate_train += 1 }
             }
             "author" => {

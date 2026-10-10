@@ -10,13 +10,17 @@ fn params(values: &[f32]) -> Params {
 }
 
 async fn spawn(workers: usize, quorum: usize, initial: Params) -> (String, tempfile_dir::Dir) {
+    spawn_with(workers, quorum, initial, None).await
+}
+
+async fn spawn_with(workers: usize, quorum: usize, initial: Params, token: Option<String>) -> (String, tempfile_dir::Dir) {
     let dir = tempfile_dir::Dir::new("coord-e2e");
     let cfg = Config {
         workers,
         quorum,
         timeout: Duration::from_secs(3600),
         outer: OuterOpt { lr: 1.0, momentum: 0.0 },
-        token: None,
+        token,
         state_dir: dir.path().join("state"),
         serve_dir: None,
     };
@@ -77,8 +81,36 @@ async fn fp16_global_download_parses_and_matches_f32_closely() {
         assert!((a - b).abs() < 1e-3);
     }
     assert!(f16_body.len() < f32_body.len());
-    let bad = c.get(format!("{base}/v1/global?dtype=int8")).send().await.unwrap();
+    let i8_body = c.get(format!("{base}/v1/global?dtype=int8")).send().await.unwrap().bytes().await.unwrap();
+    let quantised = coordinator::parse_int8_safetensors(&i8_body).unwrap();
+    for (a, b) in quantised.tensors["w"].1.iter().zip(&initial.tensors["w"].1) {
+        assert!((a - b).abs() < 0.02, "int8 global strays from the f32 weights: {a} vs {b}");
+    }
+    let bad = c.get(format!("{base}/v1/global?dtype=bogus")).send().await.unwrap();
     assert_eq!(bad.status().as_u16(), 400);
+}
+
+#[tokio::test]
+async fn every_route_needs_the_token_when_one_is_set() {
+    let token = "0123456789abcdef-test".to_string();
+    let (base, dir) = spawn_with(2, 2, params(&[0.0, 0.0]), Some(token.clone())).await;
+    let c = reqwest::Client::new();
+    assert_eq!(c.get(format!("{base}/v1/status")).send().await.unwrap().status().as_u16(), 401);
+    assert_eq!(c.get(format!("{base}/v1/global")).send().await.unwrap().status().as_u16(), 401);
+    let wrong = c.get(format!("{base}/v1/status")).bearer_auth("not-the-token").send().await.unwrap();
+    assert_eq!(wrong.status().as_u16(), 401);
+    let good = c.get(format!("{base}/v1/status")).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(good.status().as_u16(), 200);
+
+    let events = serde_json::json!([{"ev": "step", "group": "g0", "step": 10, "loss": 2.5}]);
+    assert_eq!(c.post(format!("{base}/v1/events")).json(&events).send().await.unwrap().status().as_u16(), 401);
+    let posted = c.post(format!("{base}/v1/events")).bearer_auth(&token).json(&events).send().await.unwrap();
+    assert_eq!(posted.status().as_u16(), 202);
+    let log = std::fs::read_to_string(dir.path().join("state").join("events.jsonl")).unwrap();
+    assert!(log.contains("\"group\":\"g0\"") && log.contains("\"received\""), "event not recorded: {log}");
+
+    let status: serde_json::Value = c.get(format!("{base}/v1/status")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+    assert!(status["last_seen"]["g0"].as_u64().is_some(), "worker last-seen time missing: {status}");
 }
 
 mod tempfile_dir {

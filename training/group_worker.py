@@ -44,7 +44,7 @@ from safetensors.torch import load as st_load
 from safetensors.torch import save as st_save
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from training import arch, pack
+from training import arch, initrng, pack
 from training.train import lr_at
 
 IGNORE = pack.IGNORE
@@ -54,12 +54,66 @@ SERVED = ["config.json", "tokenizer.json"] + [
 
 # Decisions broadcast from rank 0 at each sync point.
 NOTHING, SEND, MERGE, FINISH = 0, 1, 2, 3
+SCALE_SUFFIX = ".__scale"  # per-row scales in an int8 global (see coordinator.to_int8_safetensors)
+
+GROUP = "?"
+EVENTS = None  # set on rank 0 when events are posted to the coordinator
 
 
 def log(ev: str, **fields) -> None:
     fields["ev"] = ev
     fields["t"] = round(time.time(), 1)
+    fields.setdefault("group", GROUP)
     print("PW " + json.dumps(fields, separators=(",", ":"), default=str), flush=True)
+    if EVENTS is not None:
+        EVENTS.put(fields)
+
+
+class Events:
+    """Posts PW events to the coordinator from a background thread, so the monitor sees them live.
+    Monitoring never slows training: when the queue is full or the coordinator is unreachable, the
+    event is dropped and counted. The notebook log still has every line."""
+
+    def __init__(self, coord: str, token: str, batch: int = 40, flush_s: float = 5.0):
+        self.coord, self.token, self.batch, self.flush_s = coord, token, batch, flush_s
+        self.queue: queue.Queue = queue.Queue(maxsize=5000)
+        self.dropped = 0
+        self.failures = 0
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def put(self, record: dict) -> None:
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            self.dropped += 1
+
+    def _loop(self) -> None:
+        while True:
+            batch = [self.queue.get()]
+            deadline = time.monotonic() + self.flush_s
+            while len(batch) < self.batch:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    batch.append(self.queue.get(timeout=remaining))
+                except queue.Empty:
+                    break
+            self._send(batch)
+
+    def _send(self, batch: list[dict]) -> None:
+        req = urllib.request.Request(f"{self.coord}/v1/events", data=json.dumps(batch, default=str).encode(),
+                                     method="POST", headers={"Content-Type": "application/json",
+                                                             "Authorization": f"Bearer {self.token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                response.read()
+        except Exception as err:  # noqa: BLE001 - monitoring must not stop training
+            self.dropped += len(batch)
+            self.failures += 1
+            if self.failures == 1 or self.failures % 20 == 0:
+                print("PW " + json.dumps({"ev": "event_post_failed", "failures": self.failures,
+                                          "dropped": self.dropped, "error": repr(err)[:160]}), flush=True)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -85,9 +139,25 @@ def fetch_file(coord: str, token: str | None, name: str, dest: Path) -> None:
     dest.write_bytes(body)
 
 
-def fetch_global(coord: str, token: str | None, dtype: str) -> tuple[int, dict]:
+def decode_global(raw: dict, names: list[str]) -> dict:
+    """int8 rows dequantise as q * scale. f16 and f32 tensors convert to float32. Keys are the parameter names."""
+    out = {}
+    for name in names:
+        tensor, scale = raw[name], raw.get(name + SCALE_SUFFIX)
+        out[name] = tensor.float() * scale.float().unsqueeze(1) if scale is not None else tensor.float()
+    return out
+
+
+def fetch_global(coord: str, token: str | None, dtype: str, names: list[str]) -> tuple[int, dict]:
     body, headers = _request("GET", f"{coord}/v1/global?dtype={dtype}", token, timeout=1800)
-    return int(headers.get("x-pw-round", "0")), st_load(body)
+    return int(headers.get("x-pw-round", "0")), decode_global(st_load(body), names)
+
+
+def load_into(model, state: dict) -> None:
+    """Copy float32 values into the model's parameters, by name."""
+    with torch.no_grad():
+        for name, p in model.named_parameters():
+            p.copy_(state[name].to(device=p.device, dtype=p.dtype))
 
 
 def post_delta(coord: str, token: str | None, group: str, base_version: int, seq: int, delta16: dict):
@@ -106,9 +176,9 @@ def post_delta(coord: str, token: str | None, group: str, base_version: int, seq
 class Net:
     """Uploads deltas and fetches globals in background threads, so the GPUs never wait on the network."""
 
-    def __init__(self, coord: str, token: str | None, group: str, global_dtype: str, poll_s: float = 5.0):
+    def __init__(self, coord: str, token: str | None, group: str, global_dtype: str, names: list[str], poll_s: float = 5.0):
         self.coord, self.token, self.group = coord, token, group
-        self.global_dtype = global_dtype
+        self.global_dtype, self.names = global_dtype, names
         self.poll_s = poll_s
         self.lock = threading.Lock()
         self.uploads: queue.Queue = queue.Queue()
@@ -182,7 +252,7 @@ class Net:
             try:
                 status = get_json(self.coord, self.token, "/v1/status")
                 if int(status["round"]) >= want:
-                    version, state = fetch_global(self.coord, self.token, self.global_dtype)
+                    version, state = fetch_global(self.coord, self.token, self.global_dtype, self.names)
                     with self.lock:
                         self.ready = (version, state)
                     continue
@@ -268,6 +338,15 @@ def broadcast_tensors(tensors, shapes: list[torch.Size], device, src: int = 0) -
     return out
 
 
+def time_lr(step: int, progress: float, base_lr: float, warmup: int) -> float:
+    """Warm up over the first steps, then cosine-decay to 10% of the base rate by the end of the time budget.
+    Rank 0 computes it and broadcasts it at each sync point, so every GPU uses the same rate."""
+    if step < warmup:
+        return base_lr * (step + 1) / max(1, warmup)
+    progress = min(max(progress, 0.0), 1.0)
+    return base_lr * (0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+
 def checksum(params: list[torch.Tensor]) -> float:
     return float(sum(p.detach().double().abs().sum().item() for p in params))
 
@@ -295,10 +374,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=6e-4)
     p.add_argument("--warmup-steps", type=int, default=200)
     p.add_argument("--total-steps", type=int, default=0, help="planned optimizer steps for the cosine schedule")
-    p.add_argument("--global-dtype", default="f32", choices=["f32", "f16"])
+    p.add_argument("--global-dtype", default="int8", choices=["f32", "f16", "int8"],
+                   help="how the global is downloaded: int8 is a quarter of the f32 bytes")
+    p.add_argument("--data-dir", type=Path, default=None,
+                   help="this group's dataset (config.json, train/, heldout/). Each group's data is already its own shard.")
+    p.add_argument("--init-seed", type=int, default=0, help="must match training.prepare --seed (checked against the coordinator)")
+    p.add_argument("--events", action=argparse.BooleanOptionalAction, default=True,
+                   help="post monitoring events to the coordinator as well as printing them")
     p.add_argument("--log-every-s", type=float, default=60.0)
     p.add_argument("--eval-every", type=int, default=1, help="heldout evaluation after every N merges")
-    p.add_argument("--eval-examples", type=int, default=128)
+    p.add_argument("--eval-examples", type=int, default=512)
     p.add_argument("--grad-ckpt", action="store_true")
     p.add_argument("--probe-only", action="store_true", help="run a few steps and report activation magnitudes")
     p.add_argument("--probe-steps", type=int, default=20)
@@ -340,54 +425,83 @@ def main(argv: list[str] | None = None) -> int:
     if args.precision == "fp16" and device.type != "cuda":
         raise SystemExit("fp16 needs a CUDA device")
 
-    # ---- files
-    args.work_dir.mkdir(parents=True, exist_ok=True)
-    if is_root:
-        for name in SERVED:
-            if not (args.work_dir / name).exists():
-                fetch_file(coord, token, name, args.work_dir / name)
-    if world > 1:
-        dist.barrier()
+    global GROUP, EVENTS
+    GROUP = args.group
+    if args.events and is_root and token:
+        EVENTS = Events(coord, token)
+
+    # ---- configuration: from the group's dataset, or from the coordinator's served folder
+    if args.data_dir is None:
+        args.work_dir.mkdir(parents=True, exist_ok=True)
+        if is_root:
+            for name in SERVED[:2]:
+                if not (args.work_dir / name).exists():
+                    fetch_file(coord, token, name, args.work_dir / name)
+        if world > 1:
+            dist.barrier()
+    config_dir = args.data_dir if args.data_dir is not None else args.work_dir
     from transformers import Gemma3TextConfig
 
-    cfg = Gemma3TextConfig.from_json_file(str(args.work_dir / "config.json"))
+    cfg = Gemma3TextConfig.from_json_file(str(config_dir / "config.json"))
     model = arch.build_model(cfg)
     vocab = cfg.vocab_size
     names = [n for n, _ in model.named_parameters()]
+    shapes = {n: tuple(p.shape) for n, p in model.named_parameters()}
     model = model.to(device)
     if args.grad_ckpt:
         model.gradient_checkpointing_enable()
     pad = int(cfg.pad_token_id or 0)
 
-    # ---- data: each rank trains on its own slice of the replica's share
-    for split in ("train", "heldout"):
-        d = args.work_dir / split
-        d.mkdir(exist_ok=True)
-        for name in ("meta.json", "offsets.i64", "comp.i32", "tokens.u16"):
-            target = d / name
-            if is_root and not target.exists():
-                fetch_file(coord, token, f"{split}_{name}", target)
-    if world > 1:
-        dist.barrier()
-    train_ds = pack.PackedDataset(args.work_dir / "train")
-    held_ds = pack.PackedDataset(args.work_dir / "heldout")
-    total_ranks = args.replicas * world
-    my_shard = pack.shard_indices(len(train_ds), args.replica * world + rank, total_ranks)
+    # ---- data
+    if args.data_dir is None:
+        for split in ("train", "heldout"):
+            d = args.work_dir / split
+            d.mkdir(exist_ok=True)
+            for name in ("meta.json", "offsets.i64", "comp.i32", "tokens.u16"):
+                target = d / name
+                if is_root and not target.exists():
+                    fetch_file(coord, token, f"{split}_{name}", target)
+        if world > 1:
+            dist.barrier()
+        train_root, held_root = args.work_dir / "train", args.work_dir / "heldout"
+    else:
+        train_root, held_root = args.data_dir / "train", args.data_dir / "heldout"
+        if not (train_root / "meta.json").exists():
+            raise SystemExit(f"no training data at {train_root}; attach the group's dataset to the notebook")
+    train_ds = pack.PackedDataset(train_root)
+    held_ds = pack.PackedDataset(held_root)
+    if args.data_dir is not None:
+        my_shard = pack.shard_indices(len(train_ds), rank, world)  # the group's own shard, split across its GPUs
+    else:
+        my_shard = pack.shard_indices(len(train_ds), args.replica * world + rank, args.replicas * world)
     batches = Batches(train_ds, my_shard, args.micro_batch, rng)
 
-    # ---- global state
+    # ---- starting weights. Round 0: this group's deterministic init, checked against the coordinator.
+    # Later rounds: join at the coordinator's current global.
     net: Net | None = None
+    version = 0
     if is_root:
-        net = Net(coord, token, args.group, args.global_dtype)
-        version, state = fetch_global(coord, token, "f32")
-        model.load_state_dict(state, strict=False)
-        del state
+        net = Net(coord, token, args.group, args.global_dtype, names)
         status = get_json(coord, token, "/v1/status")
+        version = int(status["round"])
+        if version == 0:
+            init = initrng.init_state(shapes, args.init_seed)
+            init_sha = initrng.canonical_sha256(init)
+            if init_sha != status["global_sha256"]:
+                raise SystemExit(f"starting weights do not match the coordinator (ours {init_sha[:12]}, coordinator "
+                                 f"{status['global_sha256'][:12]}). Check --init-seed and the torch and transformers versions.")
+            load_into(model, {n: torch.from_numpy(v) for n, v in init.items()})
+            del init
+        else:
+            version, state = fetch_global(coord, token, args.global_dtype, names)
+            load_into(model, state)
+            del state
         log("start", group=args.group, replica=args.replica, replicas=args.replicas, world=world, device=str(device),
             params=sum(p.numel() for p in model.parameters()), vocab=vocab, version=version,
             train_examples=len(train_ds), shard_examples=len(my_shard), precision="fp16" if amp else "fp32",
             inner_steps=args.inner_steps, micro_batch=args.micro_batch, grad_accum=args.grad_accum,
-            coordinator_workers=status.get("workers"))
+            global_sha256=status["global_sha256"], data=str(args.data_dir or args.work_dir),
+            events=EVENTS is not None)
     if world > 1:
         # Every rank must start from the same weights: broadcast rank 0's copy.
         params_now = [p for p in model.parameters()]
@@ -441,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
             loss = F.cross_entropy(logits.reshape(-1, vocab), labels[:, 1:].reshape(-1), ignore_index=IGNORE)
             finite = bool(torch.isfinite(loss).item())
             if is_root:
-                log("probe", step=i, loss=round(float(loss.item()), 4), finite=finite,
+                log("probe", group=args.group, step=i, loss=round(float(loss.item()), 4), finite=finite,
                     max_activation=round(max(maxima) if maxima else float("nan"), 2),
                     tokens=int(mask.sum().item()))
             loss.backward()
@@ -454,10 +568,11 @@ def main(argv: list[str] | None = None) -> int:
             dist.destroy_process_group()
         return 0
 
+    current_lr = time_lr(0, 0.0, args.lr, args.warmup_steps)  # time-based schedule; updated at sync points
     try:
         while True:
             # ---------------- one optimizer step (all ranks)
-            lr = lr_at(step, total_steps, args.lr, args.warmup_steps)
+            lr = lr_at(step, total_steps, args.lr, args.warmup_steps) if args.total_steps else current_lr
             for g in optimizer.param_groups:
                 g["lr"] = lr
             optimizer.zero_grad(set_to_none=True)
@@ -535,10 +650,15 @@ def main(argv: list[str] | None = None) -> int:
                     decision = FINISH  # no more sends: the last one has been merged
                 elif steps_since_send >= args.inner_steps:
                     decision = SEND
-            flag = torch.tensor([decision], device=device, dtype=torch.long)
+            lr_next = float(lr)
+            if is_root and not args.total_steps:
+                lr_next = time_lr(step, (time.time() - started) / 60.0 / max(args.max_minutes, 1e-6), args.lr, args.warmup_steps)
+            flag = torch.tensor([float(decision), lr_next], device=device, dtype=torch.float64)
             if world > 1:
                 dist.broadcast(flag, src=0)
-            decision = int(flag.item())
+            decision = int(flag[0].item())
+            if not args.total_steps:
+                current_lr = float(flag[1].item())
 
             if decision == SEND:
                 snapshot = [p.detach().clone() for p in params]

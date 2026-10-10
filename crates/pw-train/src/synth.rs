@@ -1,6 +1,12 @@
-//! Synthetic storefront-style pages with controlled mutations. Used to make RELOCATE and
-//! AUTHOR training examples and the held-out benchmark. Everything is seeded, so the same
-//! seed always gives the same dataset.
+//! Synthetic web pages with controlled mutations. Used to make RELOCATE and AUTHOR training
+//! examples and the held-out benchmark. Everything is seeded, so the same seed always gives the
+//! same dataset.
+//!
+//! Eight page kinds. Four are storefront and account pages. The other four (table, search
+//! results, settings form, modal dialog) repeat identical controls on purpose, so the target can
+//! only be told apart by its context. Sixteen mutations change the gold element's identity,
+//! its text, its position, its tag, or the page around it. "Twin" adds an identical copy of the
+//! target, and that case is labelled as a refusal, because nothing separates the two.
 
 /// xorshift64*: small, deterministic, no dependencies.
 #[derive(Clone)]
@@ -105,7 +111,7 @@ impl Node {
         out.push('>');
     }
 
-    /// Visit every node mutably, depth first, with the path to it (indices into children).
+    /// Visit every node mutably, depth first.
     fn visit_mut(&mut self, f: &mut dyn FnMut(&mut Node)) {
         f(self);
         for c in &mut self.children {
@@ -145,10 +151,49 @@ pub enum SiteKind {
     Product,
     Login,
     Dashboard,
+    Table,
+    Search,
+    Settings,
+    Modal,
 }
 
 impl SiteKind {
-    pub const ALL: [SiteKind; 4] = [SiteKind::Checkout, SiteKind::Product, SiteKind::Login, SiteKind::Dashboard];
+    pub const ALL: [SiteKind; 8] = [
+        SiteKind::Checkout,
+        SiteKind::Product,
+        SiteKind::Login,
+        SiteKind::Dashboard,
+        SiteKind::Table,
+        SiteKind::Search,
+        SiteKind::Settings,
+        SiteKind::Modal,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SiteKind::Checkout => "checkout",
+            SiteKind::Product => "product",
+            SiteKind::Login => "login",
+            SiteKind::Dashboard => "dashboard",
+            SiteKind::Table => "table",
+            SiteKind::Search => "search",
+            SiteKind::Settings => "settings",
+            SiteKind::Modal => "modal",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            SiteKind::Checkout => "Your cart",
+            SiteKind::Product => "Trail running shoe",
+            SiteKind::Login => "Sign in to continue",
+            SiteKind::Dashboard => "Overview",
+            SiteKind::Table => "Orders",
+            SiteKind::Search => "Results for trail shoes",
+            SiteKind::Settings => "Notifications",
+            SiteKind::Modal => "Projects",
+        }
+    }
 
     fn primary(self) -> &'static [&'static str] {
         match self {
@@ -156,6 +201,10 @@ impl SiteKind {
             SiteKind::Product => &["Add to cart", "Add to bag", "Buy now"],
             SiteKind::Login => &["Sign in", "Log in", "Continue"],
             SiteKind::Dashboard => &["Export", "Save changes", "Publish"],
+            SiteKind::Table => &["Edit"],
+            SiteKind::Search => &["Add to cart", "Add to bag"],
+            SiteKind::Settings => &["Save preferences", "Save changes"],
+            SiteKind::Modal => &["Delete"],
         }
     }
 
@@ -165,6 +214,10 @@ impl SiteKind {
             SiteKind::Product => &["View details", "Compare", "Add to wishlist"],
             SiteKind::Login => &["Forgot password?", "Create account", "Help"],
             SiteKind::Dashboard => &["Refresh", "Filter", "Share"],
+            SiteKind::Table => &["Delete", "View", "Archive"],
+            SiteKind::Search => &["Save for later", "Compare"],
+            SiteKind::Settings => &["Reset to defaults", "Cancel"],
+            SiteKind::Modal => &["Cancel"],
         }
     }
 
@@ -174,6 +227,10 @@ impl SiteKind {
             SiteKind::Product => &["In stock", "Free shipping", "Reviews", "Size", "Color"],
             SiteKind::Login => &["Email", "Password", "Remember me"],
             SiteKind::Dashboard => &["Revenue", "Orders", "Visitors", "Conversion"],
+            SiteKind::Table => &["Order", "Status", "Total"],
+            SiteKind::Search => &["In stock", "Free returns", "Ships today"],
+            SiteKind::Settings => &["Email me", "Text me", "Weekly digest"],
+            SiteKind::Modal => &["This cannot be undone"],
         }
     }
 }
@@ -187,6 +244,9 @@ pub fn synonyms(text: &str) -> &'static [&'static str] {
         "Export" => &["Download CSV", "Export data"],
         "Save changes" => &["Save", "Apply changes"],
         "Place order" => &["Buy now", "Confirm order"],
+        "Save preferences" => &["Save", "Update preferences"],
+        "Edit" => &["Modify", "Change"],
+        "Delete" => &["Remove", "Delete item"],
         _ => &[],
     }
 }
@@ -229,15 +289,27 @@ fn action(rng: &mut Rng, text: &str, tag: &str) -> Node {
     n
 }
 
+/// Wrap page content in the shared chrome: a heading, a main section, and a footer link.
+fn page(title: &str, content: Node) -> Node {
+    let section = Node::new("section").attr("class", "content").child(content);
+    let body = Node::new("body")
+        .child(Node::with_text("h1", title))
+        .child(Node::new("main").child(section))
+        .child(Node::new("footer").attr("class", "footer").child(Node::with_text("a", "Help").attr("href", "/help")));
+    Node::new("html").child(Node::new("head").child(Node::with_text("title", "Shop"))).child(body)
+}
+
 /// One page. The primary action is marked gold.
 pub fn make_site(rng: &mut Rng, kind: SiteKind) -> Node {
+    match kind {
+        SiteKind::Table => return build_table(rng),
+        SiteKind::Search => return build_search(rng),
+        SiteKind::Settings => return build_settings(rng),
+        SiteKind::Modal => return build_modal(rng),
+        _ => {}
+    }
     let mut body = Node::new("body");
-    body = body.child(Node::with_text("h1", match kind {
-        SiteKind::Checkout => "Your cart",
-        SiteKind::Product => "Trail running shoe",
-        SiteKind::Login => "Sign in to continue",
-        SiteKind::Dashboard => "Overview",
-    }));
+    body = body.child(Node::with_text("h1", kind.title()));
     let mut main = Node::new("main");
     let mut section = Node::new("section").attr("class", &random_classes(rng));
     for label in kind.labels().iter().take(2 + rng.below(3)) {
@@ -273,7 +345,74 @@ pub fn make_site(rng: &mut Rng, kind: SiteKind) -> Node {
     html
 }
 
-/// Mutations that change how the gold element looks or where it sits.
+/// Orders table: every row has an "Edit" button, and only one row's button is the target.
+fn build_table(rng: &mut Rng) -> Node {
+    let rows = 3 + rng.below(4);
+    let gold_row = rng.below(rows);
+    let mut tbody = Node::new("tbody");
+    for r in 0..rows {
+        let mut edit = action(rng, "Edit", "button");
+        edit.gold = r == gold_row;
+        let row = Node::new("tr")
+            .child(Node::with_text("td", &format!("Order #{}", 1000 + rng.below(9000))))
+            .child(Node::with_text("td", SiteKind::Table.labels()[rng.below(3)]))
+            .child(Node::new("td").child(edit));
+        tbody = tbody.child(row);
+    }
+    page(SiteKind::Table.title(), Node::new("table").attr("class", &random_classes(rng)).child(tbody))
+}
+
+/// Search results: every item has an "Add to cart" button, and only one item's button is the target.
+fn build_search(rng: &mut Rng) -> Node {
+    let items = 4 + rng.below(3);
+    let gold_item = rng.below(items);
+    let mut list = Node::new("ul").attr("class", &random_classes(rng));
+    for i in 0..items {
+        let mut add = action(rng, "Add to cart", "button");
+        add.gold = i == gold_item;
+        let item = Node::new("li")
+            .attr("class", "item")
+            .child(Node::with_text("h3", &format!("Trail shoe model {}", 1 + rng.below(40))))
+            .child(Node::with_text("p", &format!("${}.{:02}", 40 + rng.below(160), rng.below(100))))
+            .child(add);
+        list = list.child(item);
+    }
+    page(SiteKind::Search.title(), list)
+}
+
+/// Settings form: a few checkboxes, then "Save preferences" (the target) and a reset button.
+fn build_settings(rng: &mut Rng) -> Node {
+    let mut form = Node::new("form").attr("action", "/settings");
+    for label in SiteKind::Settings.labels().iter().take(2 + rng.below(2)) {
+        form = form.child(Node::with_text("label", label).child(Node::new("input").attr("type", "checkbox")));
+    }
+    let label = SiteKind::Settings.primary()[rng.below(2)];
+    let mut save = action(rng, label, "button");
+    save.gold = true;
+    let mut actions = Node::new("div").attr("class", &random_classes(rng)).child(save);
+    if rng.chance(0.7) {
+        actions = actions.child(action(rng, "Reset to defaults", "button"));
+    }
+    page(SiteKind::Settings.title(), form.child(actions))
+}
+
+/// Modal dialog: a page-level "Delete" outside the dialog, and the target "Delete" inside it,
+/// next to the question that names the project.
+fn build_modal(rng: &mut Rng) -> Node {
+    let outside = action(rng, "Delete", "button");
+    let project = ["Atlas", "Borealis", "Cinder"][rng.below(3)];
+    let mut delete = action(rng, "Delete", "button");
+    delete.gold = true;
+    let dialog = Node::new("div")
+        .attr("role", "dialog")
+        .attr("class", &random_classes(rng))
+        .child(Node::with_text("p", &format!("Delete project {project}?")))
+        .child(delete)
+        .child(action(rng, "Cancel", "button"));
+    page(SiteKind::Modal.title(), Node::new("div").child(outside).child(dialog))
+}
+
+/// Mutations that change how the gold element looks, where it sits, or what surrounds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mutation {
     RenameClasses,
@@ -285,10 +424,17 @@ pub enum Mutation {
     DeleteGold,
     ShuffleSiblings,
     AddNoise,
+    AddTwin,
+    ChangeTag,
+    AddAriaLabel,
+    WrapInForm,
+    HashClasses,
+    UppercaseText,
+    IconPrefix,
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 9] = [
+    pub const ALL: [Mutation; 16] = [
         Mutation::RenameClasses,
         Mutation::DropIds,
         Mutation::WrapGold,
@@ -298,6 +444,13 @@ impl Mutation {
         Mutation::DeleteGold,
         Mutation::ShuffleSiblings,
         Mutation::AddNoise,
+        Mutation::AddTwin,
+        Mutation::ChangeTag,
+        Mutation::AddAriaLabel,
+        Mutation::WrapInForm,
+        Mutation::HashClasses,
+        Mutation::UppercaseText,
+        Mutation::IconPrefix,
     ];
 
     pub fn name(self) -> &'static str {
@@ -311,6 +464,13 @@ impl Mutation {
             Mutation::DeleteGold => "delete-gold",
             Mutation::ShuffleSiblings => "shuffle-siblings",
             Mutation::AddNoise => "add-noise",
+            Mutation::AddTwin => "add-twin",
+            Mutation::ChangeTag => "change-tag",
+            Mutation::AddAriaLabel => "add-aria-label",
+            Mutation::WrapInForm => "wrap-in-form",
+            Mutation::HashClasses => "hash-classes",
+            Mutation::UppercaseText => "uppercase-text",
+            Mutation::IconPrefix => "icon-prefix",
         }
     }
 }
@@ -469,6 +629,83 @@ pub fn apply(rng: &mut Rng, root: &mut Node, m: Mutation) -> bool {
             node_at_mut(root, &paths[rng.below(paths.len())]).children.push(Node::with_text("p", label));
             true
         }
+        Mutation::AddTwin => {
+            // An identical sibling of the target: same tag, text and classes, no id. Nothing on the
+            // page tells the two apart, so the right answer is a refusal (see datagen).
+            let mut path = Vec::new();
+            if !find_path_to_gold(root, &mut path) || path.is_empty() {
+                return false;
+            }
+            let idx = path.pop().unwrap_or(0);
+            let parent = node_at_mut(root, &path);
+            let mut twin = parent.children[idx].clone();
+            twin.gold = false;
+            twin.set_attr("id", None);
+            twin.set_attr("data-testid", None);
+            parent.children.insert(idx + 1, twin);
+            true
+        }
+        Mutation::ChangeTag => {
+            let mut changed = false;
+            root.visit_mut(&mut |n| {
+                if n.gold && !changed && (n.tag == "button" || n.tag == "a") {
+                    let (tag, role) = if n.tag == "button" { ("div", "button") } else { ("span", "link") };
+                    n.tag = tag.into();
+                    n.set_attr("role", Some(role));
+                    changed = true;
+                }
+            });
+            changed
+        }
+        Mutation::AddAriaLabel => {
+            let mut changed = false;
+            root.visit_mut(&mut |n| {
+                if n.gold && !changed {
+                    let text = n.text.clone();
+                    n.set_attr("aria-label", Some(text.as_str()));
+                    changed = true;
+                }
+            });
+            changed
+        }
+        Mutation::WrapInForm => {
+            let Some((parent_path, gold)) = take_gold(root) else { return false };
+            let form = Node::new("form").attr("class", &random_classes(rng)).child(gold);
+            node_at_mut(root, &parent_path).children.push(form);
+            true
+        }
+        Mutation::HashClasses => {
+            // Build-tool class names, like CSS modules produce. They carry no meaning across releases.
+            let mut changed = false;
+            root.visit_mut(&mut |n| {
+                if n.gold && !changed {
+                    let hashed = format!("css-{:06x}", rng.below(0xFF_FFFF));
+                    n.set_attr("class", Some(hashed.as_str()));
+                    changed = true;
+                }
+            });
+            changed
+        }
+        Mutation::UppercaseText => {
+            let mut changed = false;
+            root.visit_mut(&mut |n| {
+                if n.gold && !changed && !n.text.is_empty() {
+                    n.text = n.text.to_uppercase();
+                    changed = true;
+                }
+            });
+            changed
+        }
+        Mutation::IconPrefix => {
+            let mut changed = false;
+            root.visit_mut(&mut |n| {
+                if n.gold && !changed {
+                    n.children.insert(0, Node::with_text("span", "\u{2192}"));
+                    changed = true;
+                }
+            });
+            changed
+        }
     }
 }
 
@@ -480,7 +717,7 @@ pub struct Variant {
     pub gold_present: bool,
 }
 
-/// Apply 1 to 3 mutations (always including at least one that touches the gold element).
+/// Apply 1 to 3 mutations. Deleting the target is chosen with its own probability.
 pub fn variant(rng: &mut Rng, base: &Node) -> Variant {
     let mut root = base.clone();
     let count = 1 + rng.below(3);
@@ -535,6 +772,40 @@ mod tests {
             deleted_seen |= !v.gold_present;
         }
         assert!(deleted_seen, "delete-gold should occur in 200 variants");
+    }
+
+    #[test]
+    fn every_mutation_can_apply_and_keeps_one_target() {
+        for m in Mutation::ALL {
+            if m == Mutation::DeleteGold {
+                continue;
+            }
+            let mut applied = false;
+            'search: for kind in SiteKind::ALL {
+                for seed in 0..40 {
+                    let mut rng = Rng::new(seed);
+                    let mut page = make_site(&mut rng, kind);
+                    if apply(&mut rng, &mut page, m) {
+                        applied = true;
+                        assert_eq!(page.count_gold(), 1, "{} lost the target on {kind:?}", m.name());
+                        let _ = Snapshot::parse(&format!("<!doctype html>{}", page.render()));
+                        break 'search;
+                    }
+                }
+            }
+            assert!(applied, "{} never applied on any page kind", m.name());
+        }
+    }
+
+    #[test]
+    fn twin_adds_an_identical_sibling_without_an_id() {
+        let mut rng = Rng::new(11);
+        let mut page = make_site(&mut rng, SiteKind::Search);
+        let before = page.render().matches(">Add to cart<").count();
+        assert!(apply(&mut rng, &mut page, Mutation::AddTwin));
+        assert_eq!(page.count_gold(), 1);
+        let after = page.render().matches(">Add to cart<").count();
+        assert_eq!(after, before + 1, "the twin should add one more button with the same text");
     }
 
     #[test]

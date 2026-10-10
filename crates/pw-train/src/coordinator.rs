@@ -1,23 +1,32 @@
 //! Distributed training coordinator (DiLoCo-style).
 //!
-//! Workers train locally for H steps, then send their pseudo-gradient
-//! `delta = global - local` (fp16 safetensors). When a quorum of deltas arrives, the
-//! coordinator averages them and applies an outer Nesterov-momentum step:
+//! Workers train locally for H steps, then send `delta = global - local` as fp16 safetensors.
+//! When a quorum of deltas has arrived, the coordinator averages them and applies an outer
+//! Nesterov-momentum step:
 //!
 //!   m     <- mu * m + avg
 //!   theta <- theta - lr * (avg + mu * m)
 //!
 //! With lr = 1 and mu = 0 this is plain model averaging. The defaults (lr 0.7, mu 0.9) follow
-//! the DiLoCo paper. Workers can be slow or disappear, so a round also closes on a timeout
-//! once at least one delta has arrived. Deltas for an old round are rejected (409) and the
-//! worker downloads the current global model instead.
+//! the DiLoCo paper. A round also closes on a timeout once at least one delta has arrived.
+//! A delta based on a version more than MAX_STALENESS behind is refused (409), and the worker
+//! resyncs from the current global.
+//!
+//! Memory: each pending delta is kept as raw fp16 bits, half the size of f32. The global model
+//! and the momentum are f32. Workers download the global as int8 (one f16 scale per row of each
+//! matrix), about a quarter of the f32 bytes. f16 and f32 are available on request.
+//!
+//! When a token is configured, every /v1 route needs `Authorization: Bearer <token>`. Workers
+//! post monitoring events to /v1/events. The coordinator prints each one as a `PW {json}` line
+//! and appends it to `events.jsonl` in the state directory.
 //!
 //! RoundState is written to `state_dir` after every round, so the coordinator can restart.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use axum::body::Bytes;
@@ -39,6 +48,13 @@ pub const MAX_BODY_BYTES: usize = 512 * 1024 * 1024;
 /// A delta may be based on the current global version or up to this many versions earlier.
 /// Workers keep training while an update is in flight, so their deltas can arrive one version late.
 pub const MAX_STALENESS: u64 = 1;
+
+/// Events per POST to /v1/events, and the body size limit for that route.
+pub const MAX_EVENTS_PER_POST: usize = 500;
+pub const MAX_EVENT_BODY_BYTES: usize = 1024 * 1024;
+
+/// Name suffix of the per-row scale tensor in an int8 payload.
+pub const SCALE_SUFFIX: &str = ".__scale";
 
 /// A flat f32 copy of every tensor, keyed by name, with its shape.
 #[derive(Clone, Debug, PartialEq)]
@@ -69,6 +85,9 @@ impl Params {
     }
 }
 
+/// A delta as raw fp16 bits per tensor. Half the memory of `Params` while it waits for its round.
+pub type Delta16 = BTreeMap<String, (Vec<usize>, Vec<u16>)>;
+
 fn check_same_layout(a: &Params, b: &Params) -> Result<()> {
     if a.tensors.len() != b.tensors.len() {
         bail!("tensor count differs: {} vs {}", a.tensors.len(), b.tensors.len());
@@ -80,6 +99,13 @@ fn check_same_layout(a: &Params, b: &Params) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn delta_matches(global: &Params, delta: &Delta16) -> bool {
+    global.tensors.len() == delta.len()
+        && global.tensors.iter().all(|(name, (shape, v))| {
+            matches!(delta.get(name), Some((s2, bits)) if s2 == shape && bits.len() == v.len())
+        })
 }
 
 /// Parse a safetensors payload. Accepts f32, f16 and bf16 and converts to f32.
@@ -105,25 +131,126 @@ pub fn parse_safetensors(bytes: &[u8]) -> Result<Params> {
     Ok(Params { tensors })
 }
 
-/// Serialise as f32 (global model) or f16 (deltas, half the bytes on the wire).
+/// Serialise as f32 (exact) or f16 (half the bytes).
 pub fn to_safetensors(params: &Params, dtype: Dtype) -> Result<Vec<u8>> {
-    let mut bytes_store: Vec<(String, Vec<usize>, Vec<u8>)> = Vec::new();
+    let mut stored: Vec<(String, Vec<usize>, Vec<u8>)> = Vec::new();
     for (name, (shape, v)) in &params.tensors {
         let bytes: Vec<u8> = match dtype {
             Dtype::F32 => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
             Dtype::F16 => v.iter().flat_map(|x| f16::from_f32(*x).to_bits().to_le_bytes()).collect(),
             other => bail!("cannot write dtype {other:?}"),
         };
-        bytes_store.push((name.clone(), shape.clone(), bytes));
+        stored.push((name.clone(), shape.clone(), bytes));
     }
-    let views: Vec<(String, TensorView)> = bytes_store
+    let views: Vec<(String, TensorView)> = stored
         .iter()
         .map(|(name, shape, bytes)| Ok((name.clone(), TensorView::new(dtype, shape.clone(), bytes)?)))
         .collect::<Result<_>>()?;
     Ok(safetensors::serialize(views, None)?)
 }
 
-/// Element-wise mean of several deltas.
+/// int8 for matrices, one f16 scale per row (named `<tensor>.__scale`). f16 for the 1-D tensors.
+/// The worker dequantises as `q * scale`. The scale is rounded to f16 before the values are
+/// quantised, so both sides use the same number.
+pub fn to_int8_safetensors(params: &Params) -> Result<Vec<u8>> {
+    let mut stored: Vec<(String, Dtype, Vec<usize>, Vec<u8>)> = Vec::new();
+    for (name, (shape, v)) in &params.tensors {
+        if shape.len() == 2 && shape[1] > 0 {
+            let (rows, cols) = (shape[0], shape[1]);
+            let mut q: Vec<u8> = Vec::with_capacity(v.len());
+            let mut scales: Vec<u8> = Vec::with_capacity(rows * 2);
+            for row in v.chunks(cols) {
+                let max = row.iter().fold(0f32, |m, x| m.max(x.abs()));
+                let scale = if max > 1e-6 { f16::from_f32(max / 127.0) } else { f16::ONE };
+                let s = scale.to_f32();
+                scales.extend_from_slice(&scale.to_bits().to_le_bytes());
+                q.extend(row.iter().map(|x| ((x / s).round().clamp(-127.0, 127.0) as i8) as u8));
+            }
+            stored.push((name.clone(), Dtype::I8, shape.clone(), q));
+            stored.push((format!("{name}{SCALE_SUFFIX}"), Dtype::F16, vec![rows], scales));
+        } else {
+            let bytes: Vec<u8> = v.iter().flat_map(|x| f16::from_f32(*x).to_bits().to_le_bytes()).collect();
+            stored.push((name.clone(), Dtype::F16, shape.clone(), bytes));
+        }
+    }
+    let views: Vec<(String, TensorView)> = stored
+        .iter()
+        .map(|(name, dtype, shape, bytes)| Ok((name.clone(), TensorView::new(*dtype, shape.clone(), bytes)?)))
+        .collect::<Result<_>>()?;
+    Ok(safetensors::serialize(views, None)?)
+}
+
+/// Inverse of `to_int8_safetensors`, for tests and tools. Refuses non-finite values.
+pub fn parse_int8_safetensors(bytes: &[u8]) -> Result<Params> {
+    let st = SafeTensors::deserialize(bytes).context("not a safetensors payload")?;
+    let mut tensors = BTreeMap::new();
+    for (name, view) in st.tensors() {
+        if name.ends_with(SCALE_SUFFIX) {
+            continue;
+        }
+        let shape = view.shape().to_vec();
+        let values: Vec<f32> = match view.dtype() {
+            Dtype::I8 => {
+                let key = format!("{name}{SCALE_SUFFIX}");
+                let scales_view = st.tensor(&key).map_err(|e| anyhow::anyhow!("tensor `{name}` has no scales: {e}"))?;
+                let scales: Vec<f32> = scales_view
+                    .data()
+                    .chunks_exact(2)
+                    .map(|c| f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32())
+                    .collect();
+                let cols = shape.get(1).copied().unwrap_or(0);
+                if cols == 0 || scales.len() != shape[0] {
+                    bail!("tensor `{name}` has a scale layout that does not match its shape");
+                }
+                view.data().iter().enumerate().map(|(i, b)| (*b as i8) as f32 * scales[i / cols]).collect()
+            }
+            Dtype::F16 => view.data().chunks_exact(2).map(|c| f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32()).collect(),
+            Dtype::F32 => view.data().chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect(),
+            other => bail!("tensor `{name}` has unsupported dtype {other:?}"),
+        };
+        if values.iter().any(|v| !v.is_finite()) {
+            bail!("tensor `{name}` contains NaN or infinity");
+        }
+        tensors.insert(name.to_string(), (shape, values));
+    }
+    Ok(Params { tensors })
+}
+
+/// Parse an fp16 delta as raw bits. Other dtypes are refused, so pending deltas stay half-size.
+pub fn parse_delta16(bytes: &[u8]) -> Result<Delta16> {
+    let st = SafeTensors::deserialize(bytes).context("not a safetensors payload")?;
+    let mut out = BTreeMap::new();
+    for (name, view) in st.tensors() {
+        if view.dtype() != Dtype::F16 {
+            bail!("tensor `{name}` must be fp16 (got {:?})", view.dtype());
+        }
+        let bits: Vec<u16> = view.data().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        if bits.iter().any(|b| !f16::from_bits(*b).is_finite()) {
+            bail!("tensor `{name}` contains NaN or infinity");
+        }
+        out.insert(name.to_string(), (view.shape().to_vec(), bits));
+    }
+    Ok(out)
+}
+
+/// sha256 over the float32 little-endian values of every tensor, in name order. The Python side
+/// (training/initrng.canonical_sha256) computes the same digest, so a worker can check its starting weights.
+pub fn canonical_sha256(params: &Params) -> String {
+    let mut hasher = Sha256::new();
+    let mut buf: Vec<u8> = Vec::with_capacity(1 << 20);
+    for (_, (_, values)) in &params.tensors {
+        for chunk in values.chunks(1 << 18) {
+            buf.clear();
+            for x in chunk {
+                buf.extend_from_slice(&x.to_le_bytes());
+            }
+            hasher.update(&buf);
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+/// Element-wise mean of several f32 deltas.
 pub fn average(deltas: &[Params]) -> Result<Params> {
     let first = deltas.first().context("no deltas to average")?;
     let mut out = first.clone();
@@ -133,6 +260,27 @@ pub fn average(deltas: &[Params]) -> Result<Params> {
             let o = &d.tensors[name].1;
             for (a, b) in v.iter_mut().zip(o) {
                 *a += *b;
+            }
+        }
+    }
+    let n = deltas.len() as f32;
+    for (_, v) in out.tensors.values_mut() {
+        for a in v.iter_mut() {
+            *a /= n;
+        }
+    }
+    Ok(out)
+}
+
+/// Mean of fp16 deltas, accumulated in f32 one tensor at a time.
+fn average16(template: &Params, deltas: &[&Delta16]) -> Result<Params> {
+    anyhow::ensure!(!deltas.is_empty(), "no deltas to average");
+    let mut out = zeros_like(template);
+    for delta in deltas {
+        for (name, (_, acc)) in out.tensors.iter_mut() {
+            let (_, bits) = delta.get(name).context("delta is missing a tensor")?;
+            for (a, b) in acc.iter_mut().zip(bits) {
+                *a += f16::from_bits(*b).to_f32();
             }
         }
     }
@@ -196,7 +344,11 @@ pub struct Status {
     pub quorum: usize,
     pub received_this_round: usize,
     pub params: usize,
+    /// sha256 over the float32 values in name order (see `canonical_sha256`).
     pub global_sha256: String,
+    /// Unix time each worker last posted a delta or an event.
+    #[serde(default)]
+    pub last_seen: BTreeMap<String, u64>,
 }
 
 struct RoundState {
@@ -204,12 +356,13 @@ struct RoundState {
     global: Params,
     momentum: Params,
     /// Each delta with the global version it was computed from.
-    pending: BTreeMap<String, (Params, u64)>,
+    pending: BTreeMap<String, (Delta16, u64)>,
     /// Last accepted (sequence number, version it joined) per worker. Makes retries idempotent.
     seen: BTreeMap<String, (u64, u64)>,
+    last_seen: BTreeMap<String, u64>,
     round_started: Instant,
-    global_bytes: Vec<u8>,
-    global_bytes_f16: Vec<u8>,
+    global_f16: Arc<Vec<u8>>,
+    global_i8: Arc<Vec<u8>>,
     sha: String,
 }
 
@@ -218,24 +371,32 @@ struct Shared {
     state: Mutex<RoundState>,
 }
 
-fn sha_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
 impl RoundState {
     fn refresh_bytes(&mut self) -> Result<()> {
-        self.global_bytes = to_safetensors(&self.global, Dtype::F32)?;
-        self.global_bytes_f16 = to_safetensors(&self.global, Dtype::F16)?;
-        self.sha = sha_hex(&self.global_bytes);
+        self.global_f16 = Arc::new(to_safetensors(&self.global, Dtype::F16)?);
+        self.global_i8 = Arc::new(to_int8_safetensors(&self.global)?);
+        self.sha = canonical_sha256(&self.global);
         Ok(())
     }
 }
 
-fn persist(dir: &Path, round: u64, bytes: &[u8], status: &Status) -> Result<()> {
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Write the latest global and momentum, then the status. Only the newest copy is kept.
+fn persist(dir: &Path, state: &RoundState, cfg: &Config) -> Result<()> {
     std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("global.safetensors"), bytes)?;
-    std::fs::write(dir.join(format!("global-round-{round:06}.safetensors")), bytes)?;
-    std::fs::write(dir.join("status.json"), serde_json::to_string_pretty(status)?)?;
+    write_atomic(&dir.join("global.safetensors"), &to_safetensors(&state.global, Dtype::F32)?)?;
+    write_atomic(&dir.join("momentum.safetensors"), &to_safetensors(&state.momentum, Dtype::F32)?)?;
+    write_atomic(&dir.join("status.json"), serde_json::to_string_pretty(&status_of(state, cfg))?.as_bytes())?;
     Ok(())
 }
 
@@ -267,37 +428,42 @@ fn status_of(state: &RoundState, cfg: &Config) -> Status {
         received_this_round: state.pending.len(),
         params: state.global.len(),
         global_sha256: state.sha.clone(),
+        last_seen: state.last_seen.clone(),
     }
 }
 
 /// Close the round: average, outer step, persist, advance.
 fn aggregate(shared: &Shared, state: &mut RoundState) -> Result<()> {
     let stale = state.pending.values().filter(|(_, base)| *base < state.round).count();
-    let deltas: Vec<Params> = state.pending.values().map(|(d, _)| d.clone()).collect();
-    let avg = average(&deltas)?;
+    let deltas: Vec<&Delta16> = state.pending.values().map(|(d, _)| d).collect();
+    let count = deltas.len();
+    let avg = average16(&state.global, &deltas)?;
     outer_step(&mut state.global, &mut state.momentum, &avg, shared.cfg.outer)?;
+    drop(avg);
     state.pending.clear();
     state.round += 1;
     state.round_started = Instant::now();
     state.refresh_bytes()?;
     println!(
         "PW {}",
-        serde_json::json!({"ev": "outer", "version": state.round, "deltas": deltas.len(), "stale": stale, "global_sha": state.sha})
+        serde_json::json!({"ev": "outer", "version": state.round, "deltas": count, "stale": stale, "global_sha": state.sha})
     );
-    let status = status_of(state, &shared.cfg);
-    persist(&shared.cfg.state_dir, state.round, &state.global_bytes, &status)?;
-    std::fs::write(shared.cfg.state_dir.join("momentum.safetensors"), to_safetensors(&state.momentum, Dtype::F32)?)?;
+    persist(&shared.cfg.state_dir, state, &shared.cfg)?;
     Ok(())
 }
 
 fn authorised(cfg: &Config, headers: &HeaderMap) -> bool {
-    match &cfg.token {
-        None => true,
-        Some(t) => headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v == format!("Bearer {t}")),
-    }
+    let Some(token) = &cfg.token else { return true };
+    let Some(given) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) else { return false };
+    constant_time_eq(given.as_bytes(), format!("Bearer {token}").as_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn valid_worker_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 async fn status_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap) -> Response {
@@ -316,7 +482,7 @@ async fn status_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap) -> Re
 
 #[derive(Deserialize)]
 struct GlobalQuery {
-    /// "f32" (default, exact) or "f16" (half the download; workers merge it into f32 weights).
+    /// "f32" (default, exact), "f16", or "int8" (one quarter of the f32 bytes; workers request this).
     dtype: Option<String>,
 }
 
@@ -325,14 +491,18 @@ async fn global_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let st = sh.state.lock().await;
-    let body = match q.dtype.as_deref().unwrap_or("f32") {
-        "f32" => st.global_bytes.clone(),
-        "f16" => st.global_bytes_f16.clone(),
-        other => return (StatusCode::BAD_REQUEST, format!("unknown dtype `{other}`; use f32 or f16")).into_response(),
+    let body: Vec<u8> = match q.dtype.as_deref().unwrap_or("f32") {
+        "int8" => st.global_i8.to_vec(),
+        "f16" => st.global_f16.to_vec(),
+        "f32" => match to_safetensors(&st.global, Dtype::F32) {
+            Ok(bytes) => bytes,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        other => return (StatusCode::BAD_REQUEST, format!("unknown dtype `{other}`; use int8, f16 or f32")).into_response(),
     };
     (
         [(header::CONTENT_TYPE, "application/octet-stream".to_string()), (header::ETAG, st.sha.clone())],
-        [("x-pw-round", st.round.to_string())],
+        [("x-pw-round", st.round.to_string()), ("x-pw-sha256", st.sha.clone())],
         body,
     )
         .into_response()
@@ -351,14 +521,15 @@ async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(
     if !authorised(&sh.cfg, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    if q.worker.is_empty() || q.worker.len() > 64 || !q.worker.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !valid_worker_name(&q.worker) {
         return (StatusCode::BAD_REQUEST, "worker id must be 1-64 letters, digits, - or _").into_response();
     }
-    let delta = match parse_safetensors(&body) {
+    let delta = match parse_delta16(&body) {
         Ok(d) => d,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad delta: {e:#}")).into_response(),
     };
     let mut st = sh.state.lock().await;
+    st.last_seen.insert(q.worker.clone(), unix_now());
     if let Some(&(last, joined)) = st.seen.get(&q.worker) {
         if q.seq <= last {
             let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
@@ -377,7 +548,7 @@ async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(
         )
             .into_response();
     }
-    if check_same_layout(&st.global, &delta).is_err() {
+    if !delta_matches(&st.global, &delta) {
         return (StatusCode::BAD_REQUEST, "delta layout does not match the global model").into_response();
     }
     // The version this delta lands in. If its arrival closes the round, that round is the one it joined.
@@ -392,6 +563,54 @@ async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(
     let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
     body["accepted_into"] = serde_json::json!(accepted_into);
     (StatusCode::ACCEPTED, axum::Json(body)).into_response()
+}
+
+async fn events_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !authorised(&sh.cfg, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if body.len() > MAX_EVENT_BODY_BYTES {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let events: Vec<serde_json::Value> = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("events must be a JSON array: {e}")).into_response(),
+    };
+    if events.len() > MAX_EVENTS_PER_POST {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let now = unix_now();
+    let mut lines = String::new();
+    {
+        let mut st = sh.state.lock().await;
+        for event in &events {
+            if let Some(group) = event.get("group").and_then(|g| g.as_str()) {
+                if valid_worker_name(group) {
+                    st.last_seen.insert(group.to_string(), now);
+                }
+            }
+        }
+    }
+    for mut event in events {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("received".to_string(), serde_json::json!(now));
+        }
+        let line = event.to_string();
+        println!("PW {line}");
+        lines.push_str(&line);
+        lines.push('\n');
+    }
+    let accepted = lines.lines().count();
+    if let Err(e) = std::fs::create_dir_all(&sh.cfg.state_dir).and_then(|_| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(sh.cfg.state_dir.join("events.jsonl"))
+            .and_then(|mut f| f.write_all(lines.as_bytes()))
+    }) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("could not write events: {e}")).into_response();
+    }
+    (StatusCode::ACCEPTED, axum::Json(serde_json::json!({"accepted": accepted}))).into_response()
 }
 
 async fn file_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, axum::extract::Path(name): axum::extract::Path<String>) -> Response {
@@ -418,10 +637,11 @@ pub fn router(cfg: Config, initial: Params) -> Result<Router> {
         global,
         momentum,
         pending: BTreeMap::new(),
-        round_started: Instant::now(),
-        global_bytes: Vec::new(),
-        global_bytes_f16: Vec::new(),
         seen: BTreeMap::new(),
+        last_seen: BTreeMap::new(),
+        round_started: Instant::now(),
+        global_f16: Arc::new(Vec::new()),
+        global_i8: Arc::new(Vec::new()),
         sha: String::new(),
     };
     state.refresh_bytes()?;
@@ -430,6 +650,7 @@ pub fn router(cfg: Config, initial: Params) -> Result<Router> {
         .route("/v1/status", get(status_handler))
         .route("/v1/global", get(global_handler))
         .route("/v1/delta", post(delta_handler))
+        .route("/v1/events", post(events_handler))
         .route("/v1/files/{name}", get(file_handler))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(shared))
@@ -492,6 +713,54 @@ mod tests {
     }
 
     #[test]
+    fn int8_global_is_within_half_a_step_of_each_row_scale() {
+        let rows = 4;
+        let cols = 64;
+        let values: Vec<f32> = (0..rows * cols).map(|i| ((i * 37 % 101) as f32 - 50.0) / 17.0).collect();
+        let original = params_from(vec![("m", vec![rows, cols], values.clone()), ("n", vec![cols], vec![1.5; cols])]);
+        let back = parse_int8_safetensors(&to_int8_safetensors(&original).unwrap()).unwrap();
+        assert_eq!(back.tensors["m"].0, vec![rows, cols]);
+        for r in 0..rows {
+            let row = &values[r * cols..(r + 1) * cols];
+            let max = row.iter().fold(0f32, |m, x| m.max(x.abs()));
+            let step = max / 127.0;
+            for c in 0..cols {
+                let err = (back.tensors["m"].1[r * cols + c] - row[c]).abs();
+                assert!(err <= step * 0.51 + 1e-6, "row {r} col {c}: error {err} above half a step {step}");
+            }
+        }
+        for (a, b) in back.tensors["n"].1.iter().zip(&original.tensors["n"].1) {
+            assert!((a - b).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn int8_payload_is_about_a_quarter_of_f32() {
+        let values: Vec<f32> = (0..128 * 256).map(|i| (i % 7) as f32 * 0.01).collect();
+        let params = params_from(vec![("m", vec![128, 256], values)]);
+        let f32_len = to_safetensors(&params, Dtype::F32).unwrap().len();
+        let i8_len = to_int8_safetensors(&params).unwrap().len();
+        assert!(i8_len * 3 < f32_len, "int8 {i8_len} bytes vs f32 {f32_len}");
+    }
+
+    #[test]
+    fn canonical_hash_matches_the_python_reference() {
+        // Computed with training/initrng.canonical_sha256 on {"a": [1.0, 2.0], "b": [3.0]}.
+        let params = params_from(vec![("b", vec![1], vec![3.0]), ("a", vec![2], vec![1.0, 2.0])]);
+        assert_eq!(canonical_sha256(&params), "8e628779e6a74ee0b36991c10158f63cafec7d340ad4e075592502c8708524dd");
+    }
+
+    #[test]
+    fn deltas_must_be_fp16_and_finite() {
+        let f32_delta = to_safetensors(&p(&[0.1]), Dtype::F32).unwrap();
+        assert!(parse_delta16(&f32_delta).is_err());
+        let f16_delta = to_safetensors(&p(&[0.1]), Dtype::F16).unwrap();
+        assert!(parse_delta16(&f16_delta).is_ok());
+        let nan_delta = to_safetensors(&p(&[f32::NAN]), Dtype::F16).unwrap();
+        assert!(parse_delta16(&nan_delta).is_err());
+    }
+
+    #[test]
     fn non_finite_and_mismatched_payloads_are_refused() {
         let bad = p(&[f32::NAN]);
         assert!(parse_safetensors(&to_safetensors(&bad, Dtype::F32).unwrap()).is_err());
@@ -500,5 +769,12 @@ mod tests {
         let b = p(&[1.0]);
         assert!(average(&[a.clone(), b]).is_err());
         assert!(a.minus(&params_from(vec![("other", vec![2], vec![0.0, 0.0])])).is_err());
+    }
+
+    #[test]
+    fn constant_time_compare_is_exact() {
+        assert!(constant_time_eq(b"Bearer abc", b"Bearer abc"));
+        assert!(!constant_time_eq(b"Bearer abc", b"Bearer abd"));
+        assert!(!constant_time_eq(b"Bearer ab", b"Bearer abc"));
     }
 }

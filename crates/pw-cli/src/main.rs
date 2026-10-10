@@ -163,7 +163,8 @@ enum KaggleCmd {
         /// Planned optimizer steps for the cosine schedule (set this for a real run)
         #[arg(long, default_value_t = 0)]
         total_steps: usize,
-        #[arg(long, default_value_t = 540.0)]
+        /// Training minutes per notebook. Kaggle start-up, the install and the probe take the rest of the window.
+        #[arg(long, default_value_t = 220.0)]
         max_minutes: f64,
         #[arg(long, default_value = "training")]
         training_dir: PathBuf,
@@ -528,6 +529,8 @@ async fn main() -> Result<ExitCode> {
                         total_steps,
                         max_minutes,
                         training_dir,
+                        token: std::env::var("PW_TOKEN").ok().filter(|t| !t.is_empty())
+                            .context("set PW_TOKEN to the coordinator token (at least 16 characters)")?,
                     };
                     let plans = pw_train::kaggle::write_plan(&cfg, &out)?;
                     println!(
@@ -588,12 +591,15 @@ async fn main() -> Result<ExitCode> {
             }
             TrainCmd::Serve { init, state, serve, listen, workers, quorum, timeout_minutes, outer_lr, outer_momentum } => {
                 let initial = pw_train::coordinator::parse_safetensors(&std::fs::read(&init).with_context(|| format!("reading {}", init.display()))?)?;
+                // Public URLs are reachable by anyone, so the token is mandatory. Every worker sends it too.
+                let token = std::env::var("PW_TOKEN").ok().filter(|t| !t.is_empty()).context("set PW_TOKEN (at least 16 random characters)")?;
+                anyhow::ensure!(token.len() >= 16, "PW_TOKEN must be at least 16 characters");
                 let cfg = pw_train::coordinator::Config {
                     workers,
                     quorum: quorum.unwrap_or(workers),
                     timeout: std::time::Duration::from_secs_f64(timeout_minutes * 60.0),
                     outer: pw_train::coordinator::OuterOpt { lr: outer_lr, momentum: outer_momentum },
-                    token: std::env::var("PW_TOKEN").ok().filter(|t| !t.is_empty()),
+                    token: Some(token),
                     state_dir: state,
                     serve_dir: serve,
                 };

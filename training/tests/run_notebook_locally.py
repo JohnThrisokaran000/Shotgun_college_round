@@ -7,6 +7,11 @@ The cells run in order: the pip cell is skipped (this machine already has the li
 %%writefile cells write the training package into the rehearsal folder, and the launch cell runs
 with the coordinator URL replaced. The launch cell starts the same processes it would start on
 Kaggle (torchrun for DDP, one process per GPU for independent mode), with gloo on the CPU here.
+
+Two substitutions make the Kaggle-only parts run here:
+  --replace-input DIR   the notebook reads its dataset from /kaggle/input; this points it at DIR instead
+  --fake-gpus N         this machine has no working CUDA, so torch reports N GPUs. The launch cell then runs
+                        its CPU path with gloo. Use it only for rehearsals.
 """
 
 from __future__ import annotations
@@ -25,7 +30,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("workdir", type=Path)
     p.add_argument("--replace-url", required=True)
     p.add_argument("--with-url", required=True)
+    p.add_argument("--replace-input", type=Path, default=None, help="local folder to use in place of /kaggle/input")
+    p.add_argument("--fake-gpus", type=int, default=0, help="report this many GPUs (rehearsal on CPU only)")
     args = p.parse_args(argv)
+    if args.fake_gpus:
+        import torch
+
+        torch.cuda.device_count = lambda: args.fake_gpus
 
     nb = json.loads(args.notebook.read_text(encoding="utf-8"))
     args.workdir.mkdir(parents=True, exist_ok=True)
@@ -47,6 +58,8 @@ def main(argv: list[str] | None = None) -> None:
             ran.append(f"cell {i}: wrote {target}")
             continue
         src = src.replace(args.replace_url, args.with_url)
+        if args.replace_input is not None:
+            src = src.replace("/kaggle/input", str(args.replace_input.resolve()))
         ran.append(f"cell {i}: running")
         print(f"--- {ran[-1]}", flush=True)
         exec(compile(src, f"<notebook cell {i}>", "exec"), {"__name__": "__main__"})

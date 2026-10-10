@@ -18,7 +18,9 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
 /// The training package written into every notebook. Nothing else is needed on Kaggle.
-pub const TRAINING_FILES: &[&str] = &["__init__.py", "pwdata.py", "train.py", "arch.py", "pack.py", "logparse.py", "group_worker.py"];
+pub const TRAINING_FILES: &[&str] = &[
+    "__init__.py", "pwdata.py", "train.py", "arch.py", "pack.py", "initrng.py", "logparse.py", "group_worker.py",
+];
 
 /// transformers release the architecture code targets. Pinned in every notebook.
 pub const TRANSFORMERS_PIN: &str = "5.19.0";
@@ -102,6 +104,8 @@ pub struct PlanConfig {
     pub total_steps: usize,
     pub max_minutes: f64,
     pub training_dir: PathBuf,
+    /// Coordinator token. It is written into each private notebook, so it is never printed or committed.
+    pub token: String,
 }
 
 impl PlanConfig {
@@ -123,8 +127,9 @@ pub struct KernelPlan {
     pub ranks: Vec<usize>,
 }
 
+/// Keys are snake_case, as the Kaggle CLI reads them. camelCase keys are ignored, which would
+/// silently start a CPU-only kernel.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct KernelMetadata<'a> {
     id: String,
     title: String,
@@ -135,10 +140,20 @@ struct KernelMetadata<'a> {
     enable_gpu: bool,
     enable_tpu: bool,
     enable_internet: bool,
+    machine_shape: &'a str,
     dataset_sources: Vec<String>,
     competition_sources: Vec<String>,
     kernel_sources: Vec<String>,
     model_sources: Vec<String>,
+}
+
+/// The accelerator that gives this group its two T4s. The Kaggle SDK lists NvidiaTeslaT4, NvidiaTeslaP100
+/// and Tpu1VmV38; there is no separate 2xT4 name, so the launch cell checks the GPU count it sees.
+pub const MACHINE_SHAPE: &str = "NvidiaTeslaT4";
+
+/// Dataset slug for an account's shard. The dataset is private and owned by the same account.
+pub fn shard_slug(alias: &str) -> String {
+    format!("patchwork-shard-{alias}")
 }
 
 fn source_lines(text: &str) -> Vec<String> {
@@ -188,7 +203,8 @@ pub fn build_notebook(alias: &str, account_index: usize, cfg: &PlanConfig, files
     ));
     for (name, text) in files {
         let mut body = format!("%%writefile training/{name}\n");
-        body.push_str(text);
+        // Kaggle's runner rejects a %%writefile cell with no body, and __init__.py is empty.
+        body.push_str(if text.is_empty() { "# package marker\n" } else { text });
         cells.push(code_cell(&body));
     }
     let (replica, replicas) = match cfg.mode {
@@ -210,7 +226,8 @@ pub fn build_notebook(alias: &str, account_index: usize, cfg: &PlanConfig, files
         .replace("__LR__", &cfg.lr.to_string())
         .replace("__WARM__", &cfg.warmup_steps.to_string())
         .replace("__TOTAL__", &cfg.total_steps.to_string())
-        .replace("__MINUTES__", &cfg.max_minutes.to_string());
+        .replace("__MINUTES__", &cfg.max_minutes.to_string())
+        .replace("__TOKEN__", &cfg.token);
     cells.push(code_cell(&launch));
     serde_json::json!({
         "cells": cells,
@@ -224,8 +241,9 @@ pub fn build_notebook(alias: &str, account_index: usize, cfg: &PlanConfig, files
 }
 
 /// The launch cell. Placeholders (__URL__ etc.) are filled in by build_notebook.
-const LAUNCH_TEMPLATE: &str = r#"import os, subprocess, sys, threading, pathlib
+const LAUNCH_TEMPLATE: &str = r#"import os, glob, json, subprocess, sys, threading, pathlib
 os.environ['PYTHONUNBUFFERED'] = '1'
+os.environ['PW_TOKEN'] = '__TOKEN__'
 URL = '__URL__'
 GROUP = '__ALIAS__'
 MODE = '__MODE__'
@@ -233,12 +251,40 @@ GPUS = __GPUS__
 REPLICA = __REPLICA__
 REPLICAS = __REPLICAS__
 PROBE_STEPS = 20
-COMMON = ['--coordinator', URL, '--inner-steps', '__INNER__', '--sync-every', '__SYNC__',
-          '--max-rounds', '__ROUNDS__', '--micro-batch', '__MB__', '--grad-accum', '__GA__',
-          '--lr', '__LR__', '--warmup-steps', '__WARM__', '--total-steps', '__TOTAL__',
-          '--max-minutes', '__MINUTES__', '--log-every-s', '60', '--global-dtype', 'f32',
-          '--eval-every', '1', '--final-wait-minutes', '10']
+
+# This group's shard, attached as a dataset. The worker reads data/train and data/heldout.
+src = pathlib.Path('/kaggle/input/patchwork-shard-__ALIAS__')
+if not (src / 'train_meta.json').exists():
+    found = sorted(glob.glob('/kaggle/input/**/train_meta.json', recursive=True))
+    if not found:
+        print(subprocess.run(['find', '/kaggle/input', '-maxdepth', '4'], capture_output=True, text=True).stdout[:3000], flush=True)
+        raise SystemExit('no dataset attached: expected /kaggle/input/patchwork-shard-__ALIAS__')
+    src = pathlib.Path(found[0]).parent
+data = pathlib.Path('data')
+for split in ('train', 'heldout'):
+    (data / split).mkdir(parents=True, exist_ok=True)
+for name in ('config.json', 'tokenizer.json'):
+    if not (data / name).exists():
+        os.symlink(src / name, data / name)
+for split in ('train', 'heldout'):
+    for name in ('tokens.u16', 'offsets.i64', 'comp.i32', 'meta.json'):
+        if not (data / split / name).exists():
+            os.symlink(src / f'{split}_{name}', data / split / name)
+print('dataset:', src, flush=True)
+
+import torch
+VISIBLE = torch.cuda.device_count()
+print('GPUs visible to this group:', VISIBLE, flush=True)
+if VISIBLE < 1:
+    raise SystemExit('no GPU is visible: turn on the GPU accelerator (NvidiaTeslaT4) for this notebook')
+GPUS = min(GPUS, VISIBLE)
+
 LOG = pathlib.Path('pw_run.log')
+COMMON = ['--coordinator', URL, '--data-dir', str(data), '--init-seed', '0',
+          '--inner-steps', '__INNER__', '--sync-every', '__SYNC__', '--max-rounds', '__ROUNDS__',
+          '--micro-batch', '__MB__', '--grad-accum', '__GA__', '--lr', '__LR__', '--warmup-steps', '__WARM__',
+          '--total-steps', '__TOTAL__', '--max-minutes', '__MINUTES__', '--log-every-s', '60',
+          '--global-dtype', 'int8', '--eval-every', '1', '--eval-examples', '512', '--final-wait-minutes', '10']
 LOG.write_text('')
 lock = threading.Lock()
 captured = []
@@ -317,6 +363,7 @@ pub fn write_plan(cfg: &PlanConfig, out: &Path) -> Result<Vec<KernelPlan>> {
     anyhow::ensure!(cfg.gpus_per_account >= 1, "at least one GPU per account");
     anyhow::ensure!(cfg.micro_batch >= 1 && cfg.grad_accum >= 1, "micro-batch and grad-accum must be at least 1");
     anyhow::ensure!(cfg.sync_every >= 1 && cfg.inner_steps >= cfg.sync_every, "inner steps must be at least the sync interval");
+    anyhow::ensure!(cfg.token.len() >= 16, "the coordinator token must be at least 16 characters (set PW_TOKEN)");
     let files = read_training_files(&cfg.training_dir)?;
     fs::create_dir_all(out)?;
     let mut plans = Vec::new();
@@ -338,7 +385,8 @@ pub fn write_plan(cfg: &PlanConfig, out: &Path) -> Result<Vec<KernelPlan>> {
             enable_gpu: true,
             enable_tpu: false,
             enable_internet: true,
-            dataset_sources: vec![],
+            machine_shape: MACHINE_SHAPE,
+            dataset_sources: vec![format!("{}/{}", account.username, shard_slug(&account.alias))],
             competition_sources: vec![],
             kernel_sources: vec![],
             model_sources: vec![],
@@ -462,6 +510,7 @@ mod tests {
             total_steps: 20000,
             max_minutes: 540.0,
             training_dir,
+            token: "0123456789abcdef-test".into(),
         }
     }
 
@@ -514,9 +563,12 @@ mod tests {
         assert_eq!(plans[2].ranks, vec![2]);
         let meta: serde_json::Value = serde_json::from_str(&fs::read_to_string(out.join("acct2/kernel-metadata.json")).unwrap()).unwrap();
         assert_eq!(meta["id"], "user2/pw-worker-acct2");
-        assert_eq!(meta["enableGpu"], true);
-        assert_eq!(meta["enableInternet"], true);
-        assert_eq!(meta["isPrivate"], true);
+        assert_eq!(meta["enable_gpu"], true);
+        assert_eq!(meta["enable_internet"], true);
+        assert_eq!(meta["is_private"], true);
+        assert_eq!(meta["machine_shape"], "NvidiaTeslaT4");
+        assert_eq!(meta["dataset_sources"][0], "user2/patchwork-shard-acct2");
+        assert!(meta.get("enableGpu").is_none(), "camelCase keys are ignored by the Kaggle CLI");
         let _ = fs::remove_dir_all(&out);
     }
 
@@ -556,6 +608,9 @@ mod tests {
         assert!(text.contains("GPUS = 2"));
         assert!(text.contains("'--replicas', str(REPLICAS)"));
         assert!(text.contains("pw_run.log"));
+        assert!(text.contains("--data-dir"), "the worker must read the group's dataset");
+        assert!(text.contains("PW_TOKEN"), "the worker sends the coordinator token");
+        assert!(!text.contains("__TOKEN__"), "every placeholder is filled");
         let _ = fs::remove_dir_all(&out);
     }
 
