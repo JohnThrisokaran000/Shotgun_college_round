@@ -1,51 +1,56 @@
-# Training the PatchWork model
+# PatchWork training
 
-The model is a LLaMA-style decoder trained from scratch with PyTorch. The data, tokenizer, coordinator and launcher are in Rust (`pw` and `pw-train`). Training itself is Python, which the brief allows.
+The model is a Gemma-3-style decoder trained from scratch with PyTorch. The coordinator and launcher are Rust (`pw train`). The training code is Python, which the brief allows. Architecture details, the topology, and the Kaggle runbook are in `docs/KAGGLE.md`.
 
-## 1. Data (Rust)
+## Files
 
-```sh
-cargo run -p pw-cli -- train gen-data --out data/patchwork --sites 20000 --variants 6 --author 3 --seed 1
-```
+| File | Role |
+|---|---|
+| `arch.py` | Gemma-3-style architecture config and model, and parameter counts (EmbeddingGemma is the architectural reference only) |
+| `pack.py` | Pre-tokenized, memory-mapped data; completion-only loss masks; uniform sharding; length-bucketed batches |
+| `prepare.py` | Builds the folder the coordinator serves: config, tokenizer, starting weights, packed data |
+| `group_worker.py` | One DiLoCo replica per group (two GPUs with DDP, or one GPU). Async uploads and merges, and `PW` log lines |
+| `train.py` | Single-process training and evaluation (CPU or one GPU), also used by the group worker for its schedule |
+| `logparse.py` | Summarises `PW` log lines per group |
+| `eval_checkpoint.py` | Held-out evaluation of any checkpoint |
+| `tests/` | Unit tests (`python -m unittest discover -s training/tests -t .`) and the notebook rehearsal harness |
 
-Writes `train.jsonl`, `heldout.jsonl` and `meta.json`. RELOCATE rows use the same fast path, prefilter and prompt as the CLI. AUTHOR rows are checked against the DSL. Splits are by site, and deleted targets are capped at 15% of RELOCATE rows.
-
-## 2. Single-process training (CPU or one GPU)
-
-```sh
-.venv/bin/python -m training.train --data data/patchwork --out runs/x \
-    --hidden 256 --layers 4 --heads 4 --steps 2000 --batch 32 --lr 6e-4 --device auto --amp
-```
-
-Outputs `runs/x/model/` (safetensors, config, tokenizer), `runs/x/metrics.json`, and the tokenizer. Metrics are heldout loss and greedy exact match on held-out rows.
-
-## 3. Distributed training (DiLoCo)
+## Data
 
 ```sh
-.venv/bin/python -m training.init_model --tokenizer runs/x/tokenizer.json \
-    --train-rows data/patchwork/train.jsonl --out runs/dist --hidden 512 --layers 8 --heads 8
-./target/debug/pw train serve --init runs/dist/init.safetensors --state runs/dist/state \
-    --serve runs/dist/serve --listen 127.0.0.1:8765 --workers 3 --timeout-minutes 10
-.venv/bin/python -m training.worker --coordinator http://127.0.0.1:8765 --worker-id w0 \
-    --rank 0 --world 3 --inner-steps 500 --rounds 40 --batch 32 --work-dir runs/dist/w0
+pw train gen-data --out data/patchwork --sites 20000 --variants 6 --author 3 --seed 1
 ```
 
-Each worker trains on its shard (`items[rank::world]`) for `--inner-steps`, sends `global - local` as fp16, and resyncs when the coordinator advances. The coordinator averages the deltas and applies a Nesterov outer step (lr 0.7, momentum 0.9 by default).
+RELOCATE rows use the same fast path, prefilter, and prompt as the CLI. AUTHOR rows are checked against the DSL. Splits are by site, and deleted targets are capped at 15% of RELOCATE rows.
 
-Evaluate any round's global weights:
+## Prepare, then train
 
 ```sh
-.venv/bin/python -m training.eval_checkpoint --config runs/dist/config.json \
-    --weights runs/dist/state/global.safetensors --tokenizer runs/dist/tokenizer.json \
-    --data data/patchwork/heldout.jsonl --limit 200
+# Served folder: config, tokenizer, starting weights, packed data
+python -m training.prepare --data-dir data/patchwork --tokenizer runs/x/tokenizer.json --out runs/serve \
+    --hidden 768 --layers 24 --heads 3 --kv-heads 1 --head-dim 256 --ffn 1152 --sliding-window 512 --ctx 512
+
+# Coordinator (Rust)
+pw train serve --init runs/serve/init.safetensors --state runs/state --serve runs/serve \
+    --listen 127.0.0.1:8765 --workers 2 --quorum 2
+
+# One group on this machine (CPU here; on Kaggle the notebook runs this with torchrun on two GPUs)
+python -m training.group_worker --coordinator http://127.0.0.1:8765 --group g0 --replica 0 --replicas 2 \
+    --device cpu --inner-steps 200 --sync-every 10 --micro-batch 8 --grad-accum 2 --total-steps 2000
+
+# Watch the logs
+python -m training.logparse runs/*/g0.log runs/*/g1.log
 ```
 
-## 4. Kaggle
+## Checks
 
-See `docs/KAGGLE.md`. Plans are offline. Nothing is pushed without explicit confirmation.
+```sh
+python -m unittest discover -s training/tests -t . -v           # architecture and data
+python -m training.tests.run_notebook_locally <notebook> <dir> --replace-url <url> --with-url <local url>
+```
 
 ## Limits
 
-- The synthetic data teaches the two PatchWork jobs. It does not teach general developer knowledge. A general corpus is a separate decision (see `docs/KAGGLE.md`).
-- `training/worker.py` uses CUDA and fp16 AMP when a GPU is present. Only CPU was exercised in this environment.
-- No model is wired into the `pw` CLI yet. Inference from Rust (candle) is the next step. Until then the CLI uses the deterministic heuristic.
+- The GPU paths (fp16 autocast, fused AdamW, NCCL DDP, T4 throughput) have not run in this environment. This machine's NVIDIA driver and NVML library do not match.
+- The synthetic data teaches the two PatchWork jobs. It does not teach general developer knowledge.
+- No model is wired into the `pw` CLI yet. Inference from Rust (candle) is the next step.

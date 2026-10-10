@@ -137,14 +137,32 @@ enum KaggleCmd {
         coordinator_url: String,
         #[arg(long, default_value = "kaggle/plan")]
         out: PathBuf,
+        /// GPUs per group (a Kaggle group has two T4s)
         #[arg(long, default_value_t = 2)]
         gpus: usize,
-        #[arg(long, default_value_t = 500)]
+        /// ddp: one replica per group, both GPUs share it. independent: one replica per GPU
+        #[arg(long, default_value = "ddp")]
+        mode: String,
+        /// Optimizer steps between sends
+        #[arg(long, default_value_t = 1000)]
         inner_steps: usize,
-        #[arg(long, default_value_t = 40)]
+        /// How often a worker checks for a decision
+        #[arg(long, default_value_t = 10)]
+        sync_every: usize,
+        /// Sends per run (0 = until the time budget ends)
+        #[arg(long, default_value_t = 0)]
         rounds: usize,
-        #[arg(long, default_value_t = 32)]
-        batch: usize,
+        #[arg(long, default_value_t = 8)]
+        micro_batch: usize,
+        #[arg(long, default_value_t = 2)]
+        grad_accum: usize,
+        #[arg(long, default_value_t = 6e-4)]
+        lr: f64,
+        #[arg(long, default_value_t = 200)]
+        warmup_steps: usize,
+        /// Planned optimizer steps for the cosine schedule (set this for a real run)
+        #[arg(long, default_value_t = 0)]
+        total_steps: usize,
         #[arg(long, default_value_t = 540.0)]
         max_minutes: f64,
         #[arg(long, default_value = "training")]
@@ -189,7 +207,7 @@ enum TrainCmd {
     },
     /// Run the distributed-training coordinator (workers send deltas, it averages and steps)
     Serve {
-        /// init.safetensors written by `python -m training.init_model`
+        /// init.safetensors written by `python -m training.prepare`
         #[arg(long)]
         init: PathBuf,
         /// Where the global model and round state are kept between restarts
@@ -485,20 +503,41 @@ async fn main() -> Result<ExitCode> {
         }
         Cmd::Train { cmd } => match cmd {
             TrainCmd::Kaggle { cmd } => match cmd {
-                KaggleCmd::Plan { accounts, coordinator_url, out, gpus, inner_steps, rounds, batch, max_minutes, training_dir } => {
+                KaggleCmd::Plan {
+                    accounts, coordinator_url, out, gpus, mode, inner_steps, sync_every, rounds, micro_batch,
+                    grad_accum, lr, warmup_steps, total_steps, max_minutes, training_dir,
+                } => {
                     let text = std::fs::read_to_string(&accounts).with_context(|| format!("reading {}", accounts.display()))?;
+                    let mode = match mode.as_str() {
+                        "ddp" => pw_train::kaggle::Mode::Ddp,
+                        "independent" => pw_train::kaggle::Mode::Independent,
+                        other => anyhow::bail!("unknown mode `{other}`; use ddp or independent"),
+                    };
                     let cfg = pw_train::kaggle::PlanConfig {
                         coordinator_url,
                         accounts: pw_train::kaggle::parse_accounts(&text)?,
                         gpus_per_account: gpus,
+                        mode,
                         inner_steps,
+                        sync_every,
                         rounds,
-                        batch,
+                        micro_batch,
+                        grad_accum,
+                        lr,
+                        warmup_steps,
+                        total_steps,
                         max_minutes,
                         training_dir,
                     };
                     let plans = pw_train::kaggle::write_plan(&cfg, &out)?;
-                    println!("planned {} notebooks ({} workers) in {}", plans.len(), plans.len() * gpus, out.display());
+                    println!(
+                        "planned {} groups, {} DiLoCo replicas, {} GPUs in {} (mode {:?})",
+                        plans.len(),
+                        cfg.replicas(),
+                        plans.len() * gpus,
+                        out.display(),
+                        cfg.mode
+                    );
                     println!("nothing was sent to Kaggle. Review {}/PLAN.md, then run `pw train kaggle push`.", out.display());
                 }
                 KaggleCmd::Push { plan, keys, execute, confirm_accounts, i_have_checked_kaggle_rules } => {

@@ -36,6 +36,10 @@ use tokio::sync::Mutex;
 /// covers models far larger than the smoke test. Axum's default (2 MB) is far too small.
 pub const MAX_BODY_BYTES: usize = 512 * 1024 * 1024;
 
+/// A delta may be based on the current global version or up to this many versions earlier.
+/// Workers keep training while an update is in flight, so their deltas can arrive one version late.
+pub const MAX_STALENESS: u64 = 1;
+
 /// A flat f32 copy of every tensor, keyed by name, with its shape.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
@@ -199,9 +203,13 @@ struct RoundState {
     round: u64,
     global: Params,
     momentum: Params,
-    pending: BTreeMap<String, Params>,
+    /// Each delta with the global version it was computed from.
+    pending: BTreeMap<String, (Params, u64)>,
+    /// Last accepted (sequence number, version it joined) per worker. Makes retries idempotent.
+    seen: BTreeMap<String, (u64, u64)>,
     round_started: Instant,
     global_bytes: Vec<u8>,
+    global_bytes_f16: Vec<u8>,
     sha: String,
 }
 
@@ -217,6 +225,7 @@ fn sha_hex(bytes: &[u8]) -> String {
 impl RoundState {
     fn refresh_bytes(&mut self) -> Result<()> {
         self.global_bytes = to_safetensors(&self.global, Dtype::F32)?;
+        self.global_bytes_f16 = to_safetensors(&self.global, Dtype::F16)?;
         self.sha = sha_hex(&self.global_bytes);
         Ok(())
     }
@@ -263,13 +272,18 @@ fn status_of(state: &RoundState, cfg: &Config) -> Status {
 
 /// Close the round: average, outer step, persist, advance.
 fn aggregate(shared: &Shared, state: &mut RoundState) -> Result<()> {
-    let deltas: Vec<Params> = state.pending.values().cloned().collect();
+    let stale = state.pending.values().filter(|(_, base)| *base < state.round).count();
+    let deltas: Vec<Params> = state.pending.values().map(|(d, _)| d.clone()).collect();
     let avg = average(&deltas)?;
     outer_step(&mut state.global, &mut state.momentum, &avg, shared.cfg.outer)?;
     state.pending.clear();
     state.round += 1;
     state.round_started = Instant::now();
     state.refresh_bytes()?;
+    println!(
+        "PW {}",
+        serde_json::json!({"ev": "outer", "version": state.round, "deltas": deltas.len(), "stale": stale, "global_sha": state.sha})
+    );
     let status = status_of(state, &shared.cfg);
     persist(&shared.cfg.state_dir, state.round, &state.global_bytes, &status)?;
     std::fs::write(shared.cfg.state_dir.join("momentum.safetensors"), to_safetensors(&state.momentum, Dtype::F32)?)?;
@@ -300,15 +314,26 @@ async fn status_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap) -> Re
     axum::Json(status_of(&st, &sh.cfg)).into_response()
 }
 
-async fn global_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct GlobalQuery {
+    /// "f32" (default, exact) or "f16" (half the download; workers merge it into f32 weights).
+    dtype: Option<String>,
+}
+
+async fn global_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(q): Query<GlobalQuery>) -> Response {
     if !authorised(&sh.cfg, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let st = sh.state.lock().await;
+    let body = match q.dtype.as_deref().unwrap_or("f32") {
+        "f32" => st.global_bytes.clone(),
+        "f16" => st.global_bytes_f16.clone(),
+        other => return (StatusCode::BAD_REQUEST, format!("unknown dtype `{other}`; use f32 or f16")).into_response(),
+    };
     (
         [(header::CONTENT_TYPE, "application/octet-stream".to_string()), (header::ETAG, st.sha.clone())],
         [("x-pw-round", st.round.to_string())],
-        st.global_bytes.clone(),
+        body,
     )
         .into_response()
 }
@@ -317,6 +342,9 @@ async fn global_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap) -> Re
 struct DeltaQuery {
     worker: String,
     round: u64,
+    /// Per-worker sequence number, increasing. A repeat is acknowledged, never counted twice.
+    #[serde(default)]
+    seq: u64,
 }
 
 async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(q): Query<DeltaQuery>, body: Bytes) -> Response {
@@ -331,19 +359,39 @@ async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad delta: {e:#}")).into_response(),
     };
     let mut st = sh.state.lock().await;
-    if q.round != st.round {
-        return (StatusCode::CONFLICT, format!("round is {}, delta was for {}", st.round, q.round)).into_response();
+    if let Some(&(last, joined)) = st.seen.get(&q.worker) {
+        if q.seq <= last {
+            let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
+            body["accepted_into"] = serde_json::json!(joined);
+            body["duplicate"] = serde_json::json!(true);
+            return (StatusCode::ACCEPTED, axum::Json(body)).into_response();
+        }
+    }
+    if q.round > st.round {
+        return (StatusCode::CONFLICT, format!("delta is based on version {}, but the newest is {}", q.round, st.round)).into_response();
+    }
+    if q.round + MAX_STALENESS < st.round {
+        return (
+            StatusCode::CONFLICT,
+            format!("delta is based on version {}, more than {MAX_STALENESS} behind version {}; fetch the global and resync", q.round, st.round),
+        )
+            .into_response();
     }
     if check_same_layout(&st.global, &delta).is_err() {
         return (StatusCode::BAD_REQUEST, "delta layout does not match the global model").into_response();
     }
-    st.pending.insert(q.worker, delta);
+    // The version this delta lands in. If its arrival closes the round, that round is the one it joined.
+    let accepted_into = st.round;
+    st.seen.insert(q.worker.clone(), (q.seq, accepted_into));
+    st.pending.insert(q.worker, (delta, q.round));
     if st.pending.len() >= sh.cfg.quorum {
         if let Err(e) = aggregate(&sh, &mut st) {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
     }
-    (StatusCode::ACCEPTED, axum::Json(status_of(&st, &sh.cfg))).into_response()
+    let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
+    body["accepted_into"] = serde_json::json!(accepted_into);
+    (StatusCode::ACCEPTED, axum::Json(body)).into_response()
 }
 
 async fn file_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, axum::extract::Path(name): axum::extract::Path<String>) -> Response {
@@ -372,6 +420,8 @@ pub fn router(cfg: Config, initial: Params) -> Result<Router> {
         pending: BTreeMap::new(),
         round_started: Instant::now(),
         global_bytes: Vec::new(),
+        global_bytes_f16: Vec::new(),
+        seen: BTreeMap::new(),
         sha: String::new(),
     };
     state.refresh_bytes()?;

@@ -53,7 +53,7 @@ The heuristic accepts a candidate only if it scores at least 0.6, leads the runn
 
 ## 5. Model and data
 
-- **From scratch, per the brief.** The plan fine-tuned Qwen2.5-Coder. This build trains a LLaMA-style decoder from scratch with transformers (RMSNorm, RoPE, SwiGLU, tied embeddings). Its safetensors and config follow the layout that Rust's candle loads.
+- **From scratch, Gemma-3-style architecture.** The plan fine-tuned Qwen2.5-Coder. This build trains from scratch a Gemma-3-style decoder (grouped-query attention, QK-norm, pre- and post-RMSNorm, GeGLU, separate local and global RoPE bases, and a 5:1 sliding-window pattern). EmbeddingGemma-300M is used only as an architectural reference. Its weights, tokenizer, and pretrained state are not used, and transfer learning is not used. Its config is gated, so the dimensions are assumptions (see `docs/KAGGLE.md`).
 - **Jobs.** RELOCATE: given the stored fingerprint and up to 8 candidates, answer `{"match": k}` or `{"match": null}`. AUTHOR: given a target and a request, answer DSL ops as JSON.
 - **Data.** Synthetic storefront-style pages from four site kinds, with mutations: class renames, id removal, wrapping, moving the target, retext, look-alike decoys, deletion, sibling shuffles, and noise. Splits are by site, so no held-out page appears in training. Deleted targets are capped at 15% of RELOCATE rows. Prompts use the same prefilter, fast path and serialiser as the CLI, and omit element boxes, because training pages have none.
 - **Dataset for 20,000 sites** (`pw train gen-data --sites 20000 --variants 6 --author 3 --seed 1`): 46,064 RELOCATE rows (15.0% null), 60,000 AUTHOR rows, and a held-out split of 4,617 RELOCATE and 6,000 AUTHOR rows.
@@ -90,7 +90,7 @@ This is a smoke test, not a quality claim. The null class is the main gap, and i
 
 ### 6.3 Distributed training (DiLoCo), CPU, 3 workers
 
-Command: `pw train serve` with three `training.worker` processes, `--inner-steps 40 --rounds 2 --batch 16`. Each worker trains on one third of the 95,447 training rows.
+Command: `pw train serve` with three synchronous workers (the earlier `training/worker.py`, since replaced by `training/group_worker.py`), `--inner-steps 40 --rounds 2 --batch 16`. Each worker trains on one third of the 95,447 training rows.
 
 - Inner loss, round 0: 8.12, 8.11, 8.12 across the three workers (about log of the vocabulary size). Round 1: 5.36, 5.36, 5.35.
 - The coordinator received three deltas per round, advanced to round 2, and wrote both global checkpoints.
@@ -109,14 +109,14 @@ The protocol improves the shared model. The run was too short for AUTHOR, and to
 
 ## 7. Deviations from the plan and the brief
 
-1. **Model from scratch.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply.
+1. **Model from scratch, architecture from a reference only.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply. EmbeddingGemma-300M supplies the layer design only. Its weights and tokenizer are not used.
 2. **Heuristic fallback is not trusted for deleted targets.** Section 6.1 shows why. Relocations are provisional until verified, and the release gate enforces that.
 3. **Added identity assertions and a release gate.** Neither is in the plan text. Both follow from the plan's own rule that every relocated patch must pass its assertions in preview.
 4. **Browser runtime and editor are JavaScript.** Browsers execute JavaScript or WebAssembly. The runtime is small and is the only code visitors run.
 5. **Playwright engine is Microsoft's driver.** Driven through `playwright-rs`. The repository's JavaScript is limited to the in-page snippets.
 6. **No Rust inference yet.** The plan used `llama-server` and the brief asks for Rust. The next step is to serve the exported weights with candle. Until then the CLI uses only the heuristic.
 7. **`hk` (the Zig runtime) is not used.** The brief says Rust.
-8. **Kaggle orchestration is planned and gated, not run.** See `docs/KAGGLE.md`.
+8. **Kaggle orchestration is prepared and gated, not run.** Each account is one group of two T4s. The two GPUs train one replica with DDP, and the groups share through DiLoCo with overlapped, one-version-stale rounds. The notebooks are rehearsed locally on CPU. Nothing has run on a GPU. See `docs/KAGGLE.md`.
 
 ## 8. Known limits
 
@@ -139,4 +139,5 @@ The protocol improves the shared model. The run was too short for AUTHOR, and to
 4. Add the general developer corpus once its licence terms are decided (see `docs/KAGGLE.md`).
 5. Make `pw verify` click `clickNavigatesTo` targets.
 6. Run the same-compute comparison, single process against the DiLoCo run.
-7. Decide on Kaggle, and run the plan as described in `docs/KAGGLE.md`.
+7. Decide on Kaggle. Probe fp16 health on one real T4 first (the notebook's probe step does this), then run the plan in `docs/KAGGLE.md`.
+8. Measure the GPU paths: fp16 autocast, fused AdamW, NCCL DDP inside a group, and T4 tokens per second.
