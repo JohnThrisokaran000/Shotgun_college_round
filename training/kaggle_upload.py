@@ -89,12 +89,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--shards", type=Path, required=True, help="folder with acctNN subfolders (training.shards build)")
     p.add_argument("--accounts", type=Path, required=True, help="alias,username per line")
     p.add_argument("--keys", type=Path, required=True, help="alias=KEY per line (never printed)")
+    p.add_argument("--only", nargs="*", default=None, help="upload only these account aliases")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--confirm-accounts", type=int, default=0)
     p.add_argument("--i-have-checked-kaggle-rules", action="store_true")
     args = p.parse_args(argv)
 
-    accounts = read_accounts(args.accounts)
+    accounts = [(a, u) for a, u in read_accounts(args.accounts) if not args.only or a in args.only]
     keys = read_keys(args.keys)
     for alias, username in accounts:
         folder = args.shards / alias

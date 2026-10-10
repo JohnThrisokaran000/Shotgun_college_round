@@ -54,17 +54,27 @@ def main() -> None:
     p.add_argument("--url", required=True)
     p.add_argument("--only", nargs="*", default=None)
     p.add_argument("--wait", type=int, default=900)
+    p.add_argument("--purge", action="store_true",
+                   help="remove accounts without internet from the accounts and keys files (backups are kept)")
     args = p.parse_args()
     token = os.environ["PW_TOKEN"]
     accounts = [(a, u) for a, u in read_accounts(args.accounts) if not args.only or a in args.only]
     keys, root = read_keys(args.keys), Path("kaggle/nettest")
     users = dict(accounts)
-    for alias, user in accounts:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def push(item):
+        alias, user = item
         folder = write_kernel(root, alias, user, args.url, token)
-        print(f"{alias:<8} push: {_run(['kaggle', 'kernels', 'push', '-p', str(folder)], keys[alias])[:50]}", flush=True)
+        return alias, _run(["kaggle", "kernels", "push", "-p", str(folder)], keys[alias])[:50]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for alias, result in pool.map(push, accounts):
+            print(f"{alias:<8} push: {result}", flush=True)
     pending, deadline = set(users), time.time() + args.wait
+    results: dict[str, bool] = {}
     while pending and time.time() < deadline:
-        time.sleep(30)
+        time.sleep(10)
         for alias in sorted(pending):
             ref = f"{users[alias]}/pw-nettest-{alias}"
             status = _run(["kaggle", "kernels", "status", ref], keys[alias])
@@ -74,10 +84,22 @@ def main() -> None:
                 _run(["kaggle", "kernels", "output", ref, "-p", str(out)], keys[alias])
                 text = "".join(f.read_text(errors="replace") for f in out.glob("*.log"))
                 at = text.find("NETTEST")
-                print(f"{alias:<8} {text[at:at + 80].split(chr(92))[0] if at >= 0 else 'no result in log'}", flush=True)
+                line = text[at:at + 80].split(chr(92))[0] if at >= 0 else "no result in log"
+                results[alias] = "pypi=ok" in line and "coordinator=ok" in line
+                print(f"{alias:<8} {line}", flush=True)
                 pending.discard(alias)
     for alias in sorted(pending):
         print(f"{alias:<8} still running after {args.wait}s", flush=True)
+    working = sorted(a for a, ok in results.items() if ok)
+    print(f"\nWORKING {len(working)}/{len(users)}: {' '.join(working)}", flush=True)
+    if args.purge:
+        dead = {a for a, ok in results.items() if not ok}
+        for path, sep in ((args.accounts, ","), (args.keys, "=")):
+            kept = [l for l in path.read_text(encoding="utf-8").splitlines()
+                    if not l.strip() or l.startswith("#") or l.split(sep)[0].strip() not in dead]
+            path.with_name(path.name + ".bak-before-purge").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        print(f"purged {len(dead)} accounts without internet: {' '.join(sorted(dead))}", flush=True)
 
 
 if __name__ == "__main__":

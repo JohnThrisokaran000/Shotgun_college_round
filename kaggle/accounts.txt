@@ -1,19 +1,12 @@
 # alias,username  (keys live in kaggle/secrets/keys.env)
-acct01,harshitkhandelwal689
 acct02,johnthrisokaran
-acct03,firegod66778899
 acct04,adiacc1
-acct05,hjpjyt
-acct06,danishbhai789
 acct07,harshitkhandelwal208
-acct08,autobirdgarage
 acct09,darshanshah255
 acct10,jobythrisokaran
 acct11,harshit987165
 acct12,adiacc2
-acct13,darshanshah753
-acct14,whydoyoucare753952
 acct15,nishmashah753
-acct16,nishmashah951
 acct17,rayyanrashid07
 acct18,adiacc3
+acct19,adiacc4
