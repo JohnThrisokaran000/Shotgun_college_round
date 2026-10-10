@@ -7,8 +7,10 @@
 //!   m     <- mu * m + avg
 //!   theta <- theta - lr * (avg + mu * m)
 //!
-//! With lr = 1 and mu = 0 this is plain model averaging. The defaults (lr 0.7, mu 0.9) follow
-//! the DiLoCo paper. A round also closes on a timeout once at least one delta has arrived.
+//! With lr = 1 and mu = 0 this is plain model averaging. The defaults are lr 0.7 and mu 0. The DiLoCo
+//! paper uses mu 0.9, but with 2000-step rounds and deltas that arrive one version late, that momentum
+//! kept adding the same progress and overshot (docs/KAGGLE.md). A round also closes on a timeout once at
+//! least one delta has arrived.
 //! A delta based on a version more than MAX_STALENESS behind is refused (409), and the worker
 //! resyncs from the current global.
 //!
@@ -301,7 +303,8 @@ pub struct OuterOpt {
 
 impl Default for OuterOpt {
     fn default() -> Self {
-        OuterOpt { lr: 0.7, momentum: 0.9 }
+        // Momentum 0 on purpose. The DiLoCo value (0.9) overshot in our run: see docs/KAGGLE.md, "Outer momentum".
+        OuterOpt { lr: 0.7, momentum: 0.0 }
     }
 }
 
@@ -351,6 +354,14 @@ pub struct Status {
     pub last_seen: BTreeMap<String, u64>,
 }
 
+/// A delta being uploaded in parts. A part can be lost to a dropped connection, so each part is
+/// stored by index and a repeated part just overwrites the same slot.
+struct PartialDelta {
+    seq: u64,
+    round: u64,
+    parts: Vec<Option<Vec<u8>>>,
+}
+
 struct RoundState {
     round: u64,
     global: Params,
@@ -361,6 +372,7 @@ struct RoundState {
     seen: BTreeMap<String, (u64, u64)>,
     last_seen: BTreeMap<String, u64>,
     round_started: Instant,
+    partial: BTreeMap<String, PartialDelta>,
     global_f16: Arc<Vec<u8>>,
     global_i8: Arc<Vec<u8>>,
     sha: String,
@@ -389,6 +401,47 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn pending_dir(state_dir: &Path) -> PathBuf {
+    state_dir.join("pending")
+}
+
+/// Keep an accepted delta on disk until its round closes, so a coordinator restart does not lose it.
+fn save_pending(state_dir: &Path, worker: &str, body: &[u8], seq: u64, base: u64, accepted_into: u64) -> Result<()> {
+    let dir = pending_dir(state_dir);
+    std::fs::create_dir_all(&dir)?;
+    write_atomic(&dir.join(format!("{worker}.delta")), body)?;
+    let meta = serde_json::json!({"seq": seq, "base": base, "accepted_into": accepted_into});
+    write_atomic(&dir.join(format!("{worker}.json")), meta.to_string().as_bytes())
+}
+
+/// Reload the deltas that were waiting when the coordinator last stopped. Only deltas accepted into the
+/// current round are restored: an older one was already averaged into the global model.
+fn load_pending(state_dir: &Path, state: &mut RoundState) -> usize {
+    let dir = pending_dir(state_dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return 0 };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(worker) = path.file_stem().and_then(|n| n.to_str()).map(String::from) else { continue };
+        let Some(meta) = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { continue };
+        if meta["accepted_into"].as_u64() != Some(state.round) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(dir.join(format!("{worker}.delta"))) else { continue };
+        let Ok(delta) = parse_delta16(&bytes) else { continue };
+        if !delta_matches(&state.global, &delta) {
+            continue;
+        }
+        let seq = meta["seq"].as_u64().unwrap_or(0);
+        let base = meta["base"].as_u64().unwrap_or(state.round);
+        state.seen.insert(worker.clone(), (seq, state.round));
+        state.pending.insert(worker, (delta, base));
+    }
+    state.pending.len()
 }
 
 /// Write the latest global and momentum, then the status. Only the newest copy is kept.
@@ -449,6 +502,7 @@ fn aggregate(shared: &Shared, state: &mut RoundState) -> Result<()> {
         serde_json::json!({"ev": "outer", "version": state.round, "deltas": count, "stale": stale, "global_sha": state.sha})
     );
     persist(&shared.cfg.state_dir, state, &shared.cfg)?;
+    let _ = std::fs::remove_dir_all(pending_dir(&shared.cfg.state_dir)); // their round is closed
     Ok(())
 }
 
@@ -486,26 +540,69 @@ struct GlobalQuery {
     dtype: Option<String>,
 }
 
+/// Parse a single `bytes=a-b` (or `bytes=a-`) range against a body of `len` bytes.
+fn parse_range(value: &str, len: usize) -> Option<(usize, usize)> {
+    let spec = value.strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None;
+    }
+    let (a, b) = spec.split_once('-')?;
+    let start: usize = a.trim().parse().ok()?;
+    if start >= len {
+        return None;
+    }
+    // Like HTTP itself: a range that runs past the end is clipped to the end of the body.
+    let end: usize = if b.trim().is_empty() { len - 1 } else { b.trim().parse::<usize>().ok()?.min(len - 1) };
+    if start > end {
+        return None;
+    }
+    Some((start, end))
+}
+
 async fn global_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(q): Query<GlobalQuery>) -> Response {
     if !authorised(&sh.cfg, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let st = sh.state.lock().await;
-    let body: Vec<u8> = match q.dtype.as_deref().unwrap_or("f32") {
-        "int8" => st.global_i8.to_vec(),
-        "f16" => st.global_f16.to_vec(),
+    let body: Arc<Vec<u8>> = match q.dtype.as_deref().unwrap_or("f32") {
+        "int8" => st.global_i8.clone(),
+        "f16" => st.global_f16.clone(),
         "f32" => match to_safetensors(&st.global, Dtype::F32) {
-            Ok(bytes) => bytes,
+            Ok(bytes) => Arc::new(bytes),
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
         other => return (StatusCode::BAD_REQUEST, format!("unknown dtype `{other}`; use int8, f16 or f32")).into_response(),
     };
-    (
-        [(header::CONTENT_TYPE, "application/octet-stream".to_string()), (header::ETAG, st.sha.clone())],
-        [("x-pw-round", st.round.to_string()), ("x-pw-sha256", st.sha.clone())],
-        body,
-    )
-        .into_response()
+    let common = [
+        (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+        (header::ETAG, st.sha.clone()),
+        (header::ACCEPT_RANGES, "bytes".to_string()),
+    ];
+    let round = st.round.to_string();
+    let sha = st.sha.clone();
+    drop(st);
+    match headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
+        None => (
+            common,
+            [("x-pw-round", round), ("x-pw-sha256", sha)],
+            body.as_ref().clone(),
+        )
+            .into_response(),
+        Some(range) => match parse_range(range, body.len()) {
+            Some((a, b)) => (
+                StatusCode::PARTIAL_CONTENT,
+                common,
+                [
+                    ("x-pw-round", round),
+                    ("x-pw-sha256", sha),
+                    (header::CONTENT_RANGE.as_str(), format!("bytes {a}-{b}/{}", body.len())),
+                ],
+                body[a..=b].to_vec(),
+            )
+                .into_response(),
+            None => (StatusCode::RANGE_NOT_SATISFIABLE, [(header::CONTENT_RANGE.as_str(), format!("bytes */{}", body.len()))]).into_response(),
+        },
+    }
 }
 
 #[derive(Deserialize)]
@@ -517,34 +614,28 @@ struct DeltaQuery {
     seq: u64,
 }
 
-async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(q): Query<DeltaQuery>, body: Bytes) -> Response {
-    if !authorised(&sh.cfg, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if !valid_worker_name(&q.worker) {
-        return (StatusCode::BAD_REQUEST, "worker id must be 1-64 letters, digits, - or _").into_response();
-    }
-    let delta = match parse_delta16(&body) {
+/// Accept a delta that has fully arrived. Shared by the single-request and the chunked upload.
+fn accept_delta(sh: &Shared, st: &mut RoundState, worker: String, seq: u64, round: u64, body: &[u8]) -> Response {
+    st.last_seen.insert(worker.clone(), unix_now());
+    let delta = match parse_delta16(body) {
         Ok(d) => d,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad delta: {e:#}")).into_response(),
     };
-    let mut st = sh.state.lock().await;
-    st.last_seen.insert(q.worker.clone(), unix_now());
-    if let Some(&(last, joined)) = st.seen.get(&q.worker) {
-        if q.seq <= last {
-            let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
+    if let Some(&(last, joined)) = st.seen.get(&worker) {
+        if seq <= last {
+            let mut body = serde_json::to_value(status_of(st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
             body["accepted_into"] = serde_json::json!(joined);
             body["duplicate"] = serde_json::json!(true);
             return (StatusCode::ACCEPTED, axum::Json(body)).into_response();
         }
     }
-    if q.round > st.round {
-        return (StatusCode::CONFLICT, format!("delta is based on version {}, but the newest is {}", q.round, st.round)).into_response();
+    if round > st.round {
+        return (StatusCode::CONFLICT, format!("delta is based on version {}, but the newest is {}", round, st.round)).into_response();
     }
-    if q.round + MAX_STALENESS < st.round {
+    if round + MAX_STALENESS < st.round {
         return (
             StatusCode::CONFLICT,
-            format!("delta is based on version {}, more than {MAX_STALENESS} behind version {}; fetch the global and resync", q.round, st.round),
+            format!("delta is based on version {}, more than {MAX_STALENESS} behind version {}; fetch the global and resync", round, st.round),
         )
             .into_response();
     }
@@ -553,16 +644,77 @@ async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(
     }
     // The version this delta lands in. If its arrival closes the round, that round is the one it joined.
     let accepted_into = st.round;
-    st.seen.insert(q.worker.clone(), (q.seq, accepted_into));
-    st.pending.insert(q.worker, (delta, q.round));
+    if let Err(e) = save_pending(&sh.cfg.state_dir, &worker, body, seq, round, accepted_into) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("could not keep the delta: {e}")).into_response();
+    }
+    st.seen.insert(worker.clone(), (seq, accepted_into));
+    st.pending.insert(worker, (delta, round));
     if st.pending.len() >= sh.cfg.quorum {
-        if let Err(e) = aggregate(&sh, &mut st) {
+        if let Err(e) = aggregate(sh, st) {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
     }
-    let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
+    let mut body = serde_json::to_value(status_of(st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
     body["accepted_into"] = serde_json::json!(accepted_into);
     (StatusCode::ACCEPTED, axum::Json(body)).into_response()
+}
+
+async fn delta_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(q): Query<DeltaQuery>, body: Bytes) -> Response {
+    if !authorised(&sh.cfg, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !valid_worker_name(&q.worker) {
+        return (StatusCode::BAD_REQUEST, "worker id must be 1-64 letters, digits, - or _").into_response();
+    }
+    let mut st = sh.state.lock().await;
+    accept_delta(&sh, &mut st, q.worker, q.seq, q.round, &body)
+}
+
+#[derive(Deserialize)]
+struct PartQuery {
+    worker: String,
+    round: u64,
+    seq: u64,
+    part: usize,
+    parts: usize,
+}
+
+/// One chunk of a delta. Each request is small, so a dropped connection costs one chunk, not the whole upload.
+async fn delta_part_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, Query(q): Query<PartQuery>, body: Bytes) -> Response {
+    if !authorised(&sh.cfg, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !valid_worker_name(&q.worker) {
+        return (StatusCode::BAD_REQUEST, "worker id must be 1-64 letters, digits, - or _").into_response();
+    }
+    if q.parts == 0 || q.parts > 4096 || q.part >= q.parts {
+        return (StatusCode::BAD_REQUEST, "part must be below parts, and parts between 1 and 4096").into_response();
+    }
+    let mut st = sh.state.lock().await;
+    if let Some(&(last, joined)) = st.seen.get(&q.worker) {
+        if q.seq <= last {
+            let mut body = serde_json::to_value(status_of(&st, &sh.cfg)).unwrap_or(serde_json::Value::Null);
+            body["accepted_into"] = serde_json::json!(joined);
+            body["duplicate"] = serde_json::json!(true);
+            return (StatusCode::ACCEPTED, axum::Json(body)).into_response();
+        }
+    }
+    let entry = st.partial.entry(q.worker.clone()).or_insert_with(|| PartialDelta {
+        seq: q.seq,
+        round: q.round,
+        parts: vec![None; q.parts],
+    });
+    if entry.seq != q.seq || entry.round != q.round || entry.parts.len() != q.parts {
+        *entry = PartialDelta { seq: q.seq, round: q.round, parts: vec![None; q.parts] };
+    }
+    entry.parts[q.part] = Some(body.to_vec());
+    if entry.parts.iter().all(|p| p.is_some()) {
+        let done = st.partial.remove(&q.worker).expect("entry was just used");
+        let whole: Vec<u8> = done.parts.into_iter().flatten().flatten().collect();
+        return accept_delta(&sh, &mut st, q.worker, q.seq, q.round, &whole);
+    }
+    let received = st.partial.get(&q.worker).map(|p| p.parts.iter().filter(|x| x.is_some()).count()).unwrap_or(0);
+    (StatusCode::ACCEPTED, axum::Json(serde_json::json!({"complete": false, "part": q.part, "received": received, "parts": q.parts}))).into_response()
 }
 
 async fn events_handler(State(sh): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
@@ -640,16 +792,22 @@ pub fn router(cfg: Config, initial: Params) -> Result<Router> {
         seen: BTreeMap::new(),
         last_seen: BTreeMap::new(),
         round_started: Instant::now(),
+        partial: BTreeMap::new(),
         global_f16: Arc::new(Vec::new()),
         global_i8: Arc::new(Vec::new()),
         sha: String::new(),
     };
     state.refresh_bytes()?;
+    let restored = load_pending(&cfg.state_dir, &mut state);
+    if restored > 0 {
+        println!("PW {}", serde_json::json!({"ev": "pending_restored", "count": restored, "round": state.round}));
+    }
     let shared = Arc::new(Shared { cfg, state: Mutex::new(state) });
     Ok(Router::new()
         .route("/v1/status", get(status_handler))
         .route("/v1/global", get(global_handler))
         .route("/v1/delta", post(delta_handler))
+        .route("/v1/delta-part", post(delta_part_handler))
         .route("/v1/events", post(events_handler))
         .route("/v1/files/{name}", get(file_handler))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
