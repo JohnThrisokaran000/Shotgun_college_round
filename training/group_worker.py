@@ -33,6 +33,8 @@ import sys
 import threading
 import time
 import traceback
+import http.client
+import math
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -148,9 +150,72 @@ def decode_global(raw: dict, names: list[str]) -> dict:
     return out
 
 
+# Large transfers go through a tunnel that drops long connections under load. Every request is kept small,
+# and each one is retried on its own, so a dropped connection costs one chunk instead of the whole model.
+CHUNK_BYTES = int(os.environ.get("PW_CHUNK_MB", "16")) * 1024 * 1024
+RETRYABLE_STATUS = (502, 503, 504, 520, 521, 522, 523, 524)
+
+
+def _with_retries(call, what: str, attempts: int = 12):
+    delay = 2.0
+    for attempt in range(attempts):
+        try:
+            return call()
+        except urllib.error.HTTPError as err:
+            if err.code not in RETRYABLE_STATUS or attempt == attempts - 1:
+                raise
+            err.close()
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError, OSError):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(min(delay, 60.0))
+        delay *= 1.5
+    raise RuntimeError(f"{what} failed")
+
+
+def _ranged_download(coord: str, token: str | None, path: str) -> tuple[bytes, int, str]:
+    """Fetch a global in byte ranges. If the global changes mid-download, start again from the new one."""
+    url = f"{coord}{path}"
+    data = bytearray()
+    start, total, sha, round_no = 0, None, None, 0
+    while total is None or start < total:
+        end = start + CHUNK_BYTES - 1 if total is None else min(start + CHUNK_BYTES - 1, total - 1)
+
+        def get(start=start, end=end):
+            req = urllib.request.Request(url, method="GET")
+            if token:
+                req.add_header("Authorization", f"Bearer {token}")
+            req.add_header("Range", f"bytes={start}-{end}")
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                return resp.status, resp.headers, resp.read()
+
+        status, headers, chunk = _with_retries(get, f"download {path} bytes {start}-{end}")
+        if status == 200:  # the whole body, sent without ranges
+            return chunk, int(headers.get("x-pw-round", "0")), headers.get("x-pw-sha256", "")
+        first, last_, size = _parse_content_range(headers.get("Content-Range", ""))
+        if first != start or len(chunk) != last_ - first + 1:
+            raise RuntimeError(f"short or misplaced chunk: asked {start}, got {first}-{last_} with {len(chunk)} bytes")
+        this_sha = headers.get("x-pw-sha256", "")
+        if sha is not None and this_sha != sha:
+            data.clear()
+            start, total, sha = 0, None, None
+            continue
+        sha, round_no, total = this_sha, int(headers.get("x-pw-round", "0")), size
+        data += chunk
+        start = last_ + 1
+    return bytes(data), round_no, sha or ""
+
+
+def _parse_content_range(value: str) -> tuple[int, int, int]:
+    """'bytes a-b/total' -> (a, b, total)."""
+    spec, _, size = value.partition(" ")[2].partition("/")
+    first, _, last_ = spec.partition("-")
+    return int(first), int(last_), int(size)
+
+
 def fetch_global(coord: str, token: str | None, dtype: str, names: list[str]) -> tuple[int, dict]:
-    body, headers = _request("GET", f"{coord}/v1/global?dtype={dtype}", token, timeout=1800)
-    return int(headers.get("x-pw-round", "0")), decode_global(st_load(body), names)
+    body, round_no, _ = _ranged_download(coord, token, f"/v1/global?dtype={dtype}")
+    return round_no, decode_global(st_load(body), names)
 
 
 def load_into(model, state: dict) -> None:
@@ -161,13 +226,24 @@ def load_into(model, state: dict) -> None:
 
 
 def post_delta(coord: str, token: str | None, group: str, base_version: int, seq: int, delta16: dict):
-    """Returns (202, body) when accepted, or (status, message) when refused. Safe to repeat: same seq, same result."""
+    """Upload the delta in chunks, each retried on its own. Returns (202, body) when accepted, or (status, message)
+    when refused. Safe to repeat: the same seq gives the same result, and a repeated chunk overwrites its slot."""
     payload = st_save({k: v.contiguous() for k, v in delta16.items()})
-    try:
-        body, _ = _request("POST", f"{coord}/v1/delta?worker={group}&round={base_version}&seq={seq}", token, data=payload)
-        return 202, json.loads(body)
-    except urllib.error.HTTPError as e:
-        return e.code, e.read()[:300].decode("utf-8", "replace")
+    parts = max(1, math.ceil(len(payload) / CHUNK_BYTES))
+    result = None
+    for i in range(parts):
+        piece = payload[i * CHUNK_BYTES:(i + 1) * CHUNK_BYTES]
+        url = f"{coord}/v1/delta-part?worker={group}&round={base_version}&seq={seq}&part={i}&parts={parts}"
+
+        def put(url=url, piece=piece):
+            body, _ = _request("POST", url, token, data=piece, timeout=600)
+            return json.loads(body)
+
+        try:
+            result = _with_retries(put, f"upload delta part {i + 1}/{parts}")
+        except urllib.error.HTTPError as err:
+            return err.code, err.read()[:300].decode("utf-8", "replace")
+    return 202, result
 
 
 # ---------------------------------------------------------------- background network (rank 0 only)

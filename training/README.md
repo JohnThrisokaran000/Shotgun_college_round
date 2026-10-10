@@ -6,51 +6,31 @@ The model is a Gemma-3-style decoder trained from scratch with PyTorch. The coor
 
 | File | Role |
 |---|---|
-| `arch.py` | Gemma-3-style architecture config and model, and parameter counts (EmbeddingGemma is the architectural reference only) |
-| `pack.py` | Pre-tokenized, memory-mapped data; completion-only loss masks; uniform sharding; length-bucketed batches |
-| `prepare.py` | Builds the folder the coordinator serves: config, tokenizer, starting weights, packed data |
-| `group_worker.py` | One DiLoCo replica per group (two GPUs with DDP, or one GPU). Async uploads and merges, and `PW` log lines |
-| `train.py` | Single-process training and evaluation (CPU or one GPU), also used by the group worker for its schedule |
-| `logparse.py` | Summarises `PW` log lines per group |
-| `eval_checkpoint.py` | Held-out evaluation of any checkpoint |
+| `arch.py` | Gemma-3-style architecture config and model (EmbeddingGemma is the architectural reference only) |
+| `initrng.py` | Deterministic starting weights: the same bits on every machine, and the hash every group checks against the coordinator |
+| `pack.py` | Pre-tokenized, memory-mapped data; completion-only loss masks; length-bucketed batches |
+| `corpus/` | General corpus: `discover`, `fetch` (licence-checked), `extract` (safe archive reading, filters, chunking), `build` (dedupe, held-out packages) |
+| `shards.py` | Tokenizer training, and one packed dataset per Kaggle account |
+| `prepare.py` | The coordinator's folder: config, tokenizer, starting weights, and their hash |
+| `group_worker.py` | One DiLoCo replica per group (two GPUs with DDP). Async uploads and merges, live events to the coordinator |
+| `kaggle_upload.py`, `kaggle_ops.py`, `nettest.py`, `keep_alive.py` | Dataset upload, status checks, the internet check, and the kernel watchdog |
+| `live.py`, `status.py`, `logparse.py` | Follow the run: event stream, one table, and log summaries |
+| `eval_checkpoint.py`, `finalize.py` | Held-out evaluation and export; `finalize` also writes the model card |
 | `tests/` | Unit tests (`python -m unittest discover -s training/tests -t .`) and the notebook rehearsal harness |
 
-## Data
-
-```sh
-pw train gen-data --out data/patchwork --sites 20000 --variants 6 --author 3 --seed 1
-```
-
-RELOCATE rows use the same fast path, prefilter, and prompt as the CLI. AUTHOR rows are checked against the DSL. Splits are by site, and deleted targets are capped at 15% of RELOCATE rows.
-
-## Prepare, then train
-
-```sh
-# Served folder: config, tokenizer, starting weights, packed data
-python -m training.prepare --data-dir data/patchwork --tokenizer runs/x/tokenizer.json --out runs/serve \
-    --hidden 768 --layers 24 --heads 3 --kv-heads 1 --head-dim 256 --ffn 1152 --sliding-window 512 --ctx 512
-
-# Coordinator (Rust)
-pw train serve --init runs/serve/init.safetensors --state runs/state --serve runs/serve \
-    --listen 127.0.0.1:8765 --workers 2 --quorum 2
-
-# One group on this machine (CPU here; on Kaggle the notebook runs this with torchrun on two GPUs)
-python -m training.group_worker --coordinator http://127.0.0.1:8765 --group g0 --replica 0 --replicas 2 \
-    --device cpu --inner-steps 200 --sync-every 10 --micro-batch 8 --grad-accum 2 --total-steps 2000
-
-# Watch the logs
-python -m training.logparse runs/*/g0.log runs/*/g1.log
-```
+The commands, in order, are in `docs/KAGGLE.md`.
 
 ## Checks
 
 ```sh
-python -m unittest discover -s training/tests -t . -v           # architecture and data
-python -m training.tests.run_notebook_locally <notebook> <dir> --replace-url <url> --with-url <local url>
+python -m unittest discover -s training/tests -t . -v     # 40 tests
+cargo test --workspace                                     # 121 tests
+python -m training.tests.run_notebook_locally <notebook> <dir> --replace-url <url> --with-url <local url> \
+    --replace-input <local datasets> --fake-gpus 2         # rehearse a notebook on CPU
 ```
 
 ## Limits
 
-- The GPU paths (fp16 autocast, fused AdamW, NCCL DDP, T4 throughput) have not run in this environment. This machine's NVIDIA driver and NVML library do not match.
-- The synthetic data teaches the two PatchWork jobs. It does not teach general developer knowledge.
-- No model is wired into the `pw` CLI yet. Inference from Rust (candle) is the next step.
+- The corpus is about 700M tokens; a long run repeats it several times.
+- The synthetic PatchWork data is templated. Scores on real websites have not been measured.
+- The `pw` CLI runs the model with `--model DIR` (crates/pw-model, candle). The heuristic remains the default.
