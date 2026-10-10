@@ -73,7 +73,10 @@ python -m training.kaggle_ops datasets --accounts kaggle/accounts.txt --keys kag
 pw train kaggle plan --accounts kaggle/accounts.txt --coordinator-url <tunnel url> --out kaggle/plan \
     --inner-steps 2000 --sync-every 10 --micro-batch 8 --grad-accum 2 --lr 6e-4 --warmup-steps 200 --max-minutes 600
 pw train kaggle push --plan kaggle/plan --keys kaggle/secrets/keys.env --execute --confirm-accounts 11 --i-have-checked-kaggle-rules
-python -m training.keep_alive --plan kaggle/plan --accounts kaggle/accounts.txt --keys kaggle/secrets/keys.env --grace 300
+# Run the watchdog as a background process with a log, not inside a monitor: a monitor is killed at its
+# timeout (30 minutes at most), and the watchdog dies with it. On 2026-10-10 it stopped for about 40 minutes that way.
+nohup .venv/bin/python -u -m training.keep_alive --plan kaggle/plan8 --accounts kaggle/active2.txt \
+    --keys kaggle/secrets/keys.env --interval 30 --grace 300 --silent 10 >> runs/keep_alive.log 2>&1 < /dev/null & disown
 
 # 5. Watch.
 python -m training.status runs/state/events.jsonl --watch 30     # one table
@@ -87,6 +90,8 @@ python -m training.finalize --out runs/final --patchwork data/pw-v2/heldout.json
 ## Behaviour under failure
 
 - A group that crashes is re-pushed by `keep_alive` and rejoins at the coordinator's current global version (it downloads the int8 global).
+- A delta refused as too stale (HTTP 409) is not lost. The group merges the newer global and keeps the progress it made since its snapshot, and its next delta carries that progress. The cost is delay.
+- A global download of 126 MB per group, with 13 groups fetching at once, takes about 5 minutes through the tunnel. Each merge therefore lands several minutes after the round closes.
 - Every delta carries a per-worker sequence number, so a retried upload is never counted twice.
 - A delta based on a global version more than one behind is refused (409). The group resyncs and loses only that stretch.
 - A round closes when `--quorum` deltas arrive, or `--timeout-minutes` after the round started once at least one has arrived.
@@ -105,6 +110,7 @@ python -m training.finalize --out runs/final --patchwork data/pw-v2/heldout.json
 - Deltas that arrive one version late are still accepted (MAX_STALENESS = 1). With momentum on, that double-counts progress.
 - This diagnosis is a hypothesis from these measurements. No ablation has been run.
 - Decision, 22:45: roll forward. The coordinator restarted from the current global with `--outer-momentum 0` (learning rate 0.7). The default is now 0 in `pw train serve`. Check held-out loss at the next two merges. If it stays above about 4, roll back to version 1, which is the only older global on disk (`runs/checkpoints/v1-from-acct09.safetensors`).
+- Outcome, 23:07: version 5, the first merge with momentum 0, gave held-out loss of 3.24 to 3.47 across the groups. Version 4 gave 6.9 to 8.2. Training loss is about 1.8. The second merge (version 6) is the confirmation.
 - The coordinator keeps only the newest global, so versions 2 and 3 are gone. Save a dated copy of each global before the next run.
 
 ## Verified
