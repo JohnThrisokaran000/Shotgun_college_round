@@ -16,4 +16,8 @@ kaggle/plan6/
 # Plan folders hold the notebooks that embed the coordinator token. Never commit them.
 kaggle/plan*/
 .~lock.*#
-models/
+# Model folders are ignored, except the small matchers. lm-global is over GitHub's 100 MB file limit, and
+# matcher-v1-leaked was trained on the gold-marker leak (DESIGN 6.7a), so it is not shipped.
+models/*
+!models/matcher-v2/
+!models/matcher-demo/
