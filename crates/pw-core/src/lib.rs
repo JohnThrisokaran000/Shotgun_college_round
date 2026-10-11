@@ -5,14 +5,17 @@
 pub mod anchor;
 pub mod audit;
 pub mod conflict;
+pub mod describe;
 pub mod dsl;
 pub mod error;
 pub mod patch;
 pub mod prompt;
 pub mod relocate;
 pub mod release;
+pub mod review;
 pub mod serialize;
 pub mod similarity;
 pub mod snapshot;
+pub mod verify;
 
 pub use error::{PwError, Result};

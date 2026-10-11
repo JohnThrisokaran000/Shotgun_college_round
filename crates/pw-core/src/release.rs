@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::anchor::Locators;
@@ -67,6 +68,18 @@ impl Manifest {
         });
         Ok(hex::encode(Sha256::digest(body.to_string().as_bytes()))[..16].to_string())
     }
+}
+
+/// Hash of what the patches do: their ids, pages, anchors, operations and assertions. It leaves out the
+/// channel, the parent, and the file hash, which also covers the author and review state. So the same behaviour
+/// gives the same digest on every channel, and approving a patch does not invalidate its verification.
+pub fn patches_digest(patches: &[ManifestPatch]) -> Result<String> {
+    let behaviour: Vec<Value> = patches
+        .iter()
+        .map(|p| json!({"id": p.id, "page": p.page, "locators": p.locators, "ops": p.ops, "assert": p.assertions}))
+        .collect();
+    let body = serde_json::to_string(&behaviour)?;
+    Ok(hex::encode(Sha256::digest(body.as_bytes()))[..16].to_string())
 }
 
 fn releases_dir(root: &Path) -> PathBuf {
@@ -203,6 +216,24 @@ mod tests {
         assert_eq!(a.id, b.id);
         let c = Manifest::build("preview/x", None, 1, &[]).unwrap();
         assert_ne!(a.id, c.id);
+    }
+
+    #[test]
+    fn patches_digest_follows_behaviour_not_the_file() {
+        let base = ManifestPatch {
+            id: "p1".into(),
+            sha256: "file-a".into(),
+            page: "/".into(),
+            locators: Locators { css: Some("#buy".into()), ..Default::default() },
+            ops: vec![Op::Hide {}],
+            assertions: vec![],
+        };
+        let mut reapproved = base.clone();
+        reapproved.sha256 = "file-b".into();
+        assert_eq!(patches_digest(&[base.clone()]).unwrap(), patches_digest(&[reapproved]).unwrap());
+        let mut changed = base.clone();
+        changed.ops = vec![Op::Show {}];
+        assert_ne!(patches_digest(&[base]).unwrap(), patches_digest(&[changed]).unwrap());
     }
 
     #[test]

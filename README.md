@@ -35,13 +35,15 @@ cargo build -p pw-cli                      # builds ./target/debug/pw
 
 - `pw init`, `pw dsl-schema`, `pw log`, `pw audit-verify`
 - `pw snapshot URL --out FILE`: captures HTML and element rectangles
-- `pw edit URL`: visual editor (headed Chromium); each Save writes a validated patch with an identity assertion
-- `pw check --snapshot PAGE=FILE [--write] [--json]`: re-anchors every patch. Exit 2 if any patch is broken or ambiguous
-- `pw merge --with DIR --snapshot PAGE=FILE`: conflicts between two patch sets
-- `pw release [--dry-run] [--accept-relocated] --snapshot PAGE=FILE`: publishes an immutable release. Refuses heuristic relocations unless `--accept-relocated`
-- `pw rollback`, `pw proxy --listen ADDR`, `pw verify --base URL --channel NAME`
+- `pw edit URL [--author NAME]`: visual editor (headed Chromium). Text, background, text colour, font size, classes, link target, hide, and move before or after another element. Each Save writes a draft patch with an identity assertion, and is audited under the actor
+- `pw check --snapshot PAGE=FILE [--write] [--json]`: re-anchors every patch. Exit 2 if any patch is broken or ambiguous. `--write` rewrites relocated anchors and audits each one; an approved patch then needs approval again
+- `pw merge --with DIR --snapshot PAGE=FILE [--write]`: conflicts between two patch sets. `--write` copies the other set's new patches in, and refuses when there are hard conflicts
+- `pw review propose | approve | reject | list`: review states for patches. An approval is tied to the patch's content, so editing an approved patch withdraws it. The author cannot approve their own patch unless `--allow-self-review` is given, and that is recorded
+- `pw release [--channel NAME] [--dry-run] [--accept-relocated] [--waive-verification REASON] [--waive-review REASON] --snapshot PAGE=FILE`: publishes an immutable release. Refuses heuristic relocations unless `--accept-relocated`. Protected channels (`production` by default, in `pw.toml`) also need every patch approved and a complete, passing verification of the same behaviour. `--dry-run` lists every reason a real release would be blocked. A waiver is audited with its reason
+- `pw verify --base URL --channel NAME [--interact] [--no-visual]`: checks each assertion in Chromium through the proxy, compares the channel with production outside the patched elements, and writes a verification record. `--interact` runs click checks, and a click can trigger a real action, so use a copy of the site
+- `pw rollback`, `pw proxy --listen ADDR`. Every command takes `--actor NAME` (or `PW_ACTOR`) for the audit trail; the default is the login name, and the name is declared, not checked
 - `pw browser install [--with-deps]`, `pw browser status`
-- `pw train gen-data | bench | serve | kaggle plan | kaggle push`
+- `pw train gen-data | match-data | bench [--matcher DIR] [--matcher-grid] [--drift compound] | serve | kaggle plan | kaggle push`
 
 ## Status
 
@@ -54,9 +56,10 @@ Verified here:
 
 Not verified or not done:
 
-- **No trained model is wired into the CLI.** The CLI uses the deterministic heuristic. Inference from Rust (candle) is the next step.
-- The heuristic is wrong on about 18% of deleted-target cases in the held-out benchmark. See `docs/DESIGN.md`. This is why a relocation needs verification before it is released.
-- `pw edit` opens a visible browser. Its save path was not exercised interactively here.
+- The trained language model runs in Rust (`pw --model DIR`). It is opt-in and not recommended: on the benchmark it does not beat the heuristic (`docs/DESIGN.md`, section 6.5).
+- The matcher, trained from scratch, is opt-in (`pw train bench --matcher DIR`). Under the protocol fixed in advance it is not adopted: it relocates 90% of compound-drift targets correctly (the heuristic: 33%), but it makes more wrong matches on mixed drift. See `docs/DESIGN.md`, sections 6.7 and 6.7b.
+- The heuristic mis-matches 6.4% of deleted targets on one held-out benchmark seed, and it relocates only 33% of targets when the id, text and place all change (`docs/DESIGN.md`, sections 6.6 and 6.9). This is why a relocation needs verification before it is released.
+- `pw edit` is tested in headless Chromium, through the real overlay script. A headed session has not been tested here.
 - Nothing ran on Kaggle, and Kaggle's rules on multiple accounts are not confirmed. See `docs/KAGGLE.md`.
 - The general developer corpus is not built. See `docs/KAGGLE.md`.
 

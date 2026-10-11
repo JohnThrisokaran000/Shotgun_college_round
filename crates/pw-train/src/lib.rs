@@ -7,4 +7,5 @@ pub mod bench;
 pub mod coordinator;
 pub mod datagen;
 pub mod kaggle;
+pub mod match_data;
 pub mod synth;

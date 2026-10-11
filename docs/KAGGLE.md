@@ -126,3 +126,12 @@ python -m training.finalize --out runs/final --patchwork data/pw-v2/heldout.json
 - Scores on real websites. All PatchWork data is synthetic.
 - Kaggle's multi-account terms. I could not read them, and the account owner decided to proceed. Treat the 19 keys that were pasted into chat as exposed and rotate them.
 - Relocation quality with the model. The Rust decoder matches Python on the v1 checkpoint, and `pw --model` runs end to end. But the v1 model mis-matches deleted targets far more often than the heuristic (DESIGN.md, section 6.5).
+
+## Scheduling local work around the run
+
+These facts come from this run, and they bear on any local job.
+
+- **Deltas arrive in waves.** Each group sends its delta when it finishes 2,000 steps, about an hour after it merged the previous global. The uploads for one round therefore arrive over roughly 15 minutes, and the link is quiet until the next wave. Downloads on this machine share the link that carries those deltas, so start a large download only in a quiet window, and pause it (`kill -STOP`) when a round's deltas start to arrive. Resume it (`kill -CONT`) once the round has closed.
+- **The coordinator runs on this machine.** Its aggregation takes RAM and CPU. Keep local jobs at nice 15, with few threads, and keep the free memory above about 4 GB while a round is closing.
+- **Sessions are 600 minutes.** The GPU quota is 30 hours per account per week. At these session lengths, each account runs about three full sessions a week. Local CPU or GPU work costs nothing from that quota, so keep local models off the Kaggle GPUs.
+- **Do not reboot this machine while the run is going.** The tunnel URL changes on restart, which strands the notebooks. Package updates that touch the NVIDIA driver need a reboot, so schedule them with the run (see the memory file on the laptop GPU).

@@ -11,16 +11,50 @@ use strsim::normalized_levenshtein;
 use crate::anchor::{normalize_text, Anchor, Fingerprint};
 use crate::snapshot::{Element, Rect};
 
-pub const W_TAG: f64 = 2.0;
-pub const W_ID: f64 = 2.0;
+// Tuned on the development split (seed 101) and checked on seeds 7 and 202; docs/DESIGN.md section 6.6.
+// Before tuning, tag, id, class, text and xpath were 2, 2, 1, 2 and 1.
+pub const W_TAG: f64 = 0.5;
+pub const W_ID: f64 = 3.0;
 pub const W_NAME: f64 = 2.0;
-pub const W_CLASS: f64 = 1.0;
-pub const W_TEXT: f64 = 2.0;
+pub const W_CLASS: f64 = 1.5;
+pub const W_TEXT: f64 = 1.5;
 pub const W_ATTRS: f64 = 1.0;
-pub const W_XPATH: f64 = 1.0;
+pub const W_XPATH: f64 = 0.5;
 pub const W_ANCESTORS: f64 = 1.0;
 pub const W_NEIGHBORS: f64 = 2.0;
 pub const W_RECT: f64 = 1.0;
+
+/// The weight of each feature. The defaults are the constants above. The tuning scripts change them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Weights {
+    pub tag: f64,
+    pub id: f64,
+    pub name: f64,
+    pub class: f64,
+    pub text: f64,
+    pub attrs: f64,
+    pub xpath: f64,
+    pub ancestors: f64,
+    pub neighbors: f64,
+    pub rect: f64,
+}
+
+impl Default for Weights {
+    fn default() -> Self {
+        Weights {
+            tag: W_TAG,
+            id: W_ID,
+            name: W_NAME,
+            class: W_CLASS,
+            text: W_TEXT,
+            attrs: W_ATTRS,
+            xpath: W_XPATH,
+            ancestors: W_ANCESTORS,
+            neighbors: W_NEIGHBORS,
+            rect: W_RECT,
+        }
+    }
+}
 
 #[derive(Default)]
 struct Accumulator {
@@ -93,31 +127,36 @@ pub fn context_score(fp: &Fingerprint, el: &Element) -> Option<f64> {
     }
 }
 
-/// Similarity in [0, 1] between the anchor's stored description and `el`.
+/// Similarity in [0, 1] between the anchor's stored description and `el`, with the default weights.
 pub fn score(anchor: &Anchor, el: &Element) -> f64 {
+    score_with(anchor, el, &Weights::default())
+}
+
+/// As [`score`], with the feature weights given.
+pub fn score_with(anchor: &Anchor, el: &Element, w: &Weights) -> f64 {
     let fp = &anchor.fingerprint;
     let mut acc = Accumulator::default();
 
-    acc.add(W_TAG, if fp.tag.eq_ignore_ascii_case(&el.tag) { 1.0 } else { 0.0 });
+    acc.add(w.tag, if fp.tag.eq_ignore_ascii_case(&el.tag) { 1.0 } else { 0.0 });
 
     // A removed id or class is no evidence either way; a different one is a mismatch.
     if let Some(id) = fp.attrs.get("id").filter(|s| !s.is_empty()) {
         if let Some(live) = el.attrs.get("id").filter(|s| !s.is_empty()) {
-            acc.add(W_ID, if live == id { 1.0 } else { 0.0 });
+            acc.add(w.id, if live == id { 1.0 } else { 0.0 });
         }
     }
     if let Some(name) = fp.attrs.get("name").filter(|s| !s.is_empty()) {
-        acc.add(W_NAME, if el.attrs.get("name") == Some(name) { 1.0 } else { 0.0 });
+        acc.add(w.name, if el.attrs.get("name") == Some(name) { 1.0 } else { 0.0 });
     }
     if let Some(classes) = fp.attrs.get("class").filter(|c| !c.trim().is_empty()) {
         let live = el.class_list();
         if !live.is_empty() {
             let stored: Vec<&str> = classes.split_whitespace().collect();
-            acc.add(W_CLASS, jaccard(stored, live));
+            acc.add(w.class, jaccard(stored, live));
         }
     }
     if let Some(text) = fp.text.as_deref().filter(|t| !t.is_empty()) {
-        acc.add(W_TEXT, normalized_levenshtein(&normalize_text(text), &normalize_text(&el.text)));
+        acc.add(w.text, normalized_levenshtein(&normalize_text(text), &normalize_text(&el.text)));
     }
 
     let others: Vec<(&String, &String)> = fp
@@ -127,25 +166,25 @@ pub fn score(anchor: &Anchor, el: &Element) -> f64 {
         .collect();
     if !others.is_empty() {
         let hits = others.iter().filter(|(k, v)| el.attrs.get(k.as_str()) == Some(*v)).count();
-        acc.add(W_ATTRS, hits as f64 / others.len() as f64);
+        acc.add(w.attrs, hits as f64 / others.len() as f64);
     }
 
     if let Some(xpath) = anchor.locators.xpath.as_deref() {
-        acc.add(W_XPATH, normalized_levenshtein(xpath, &el.xpath));
+        acc.add(w.xpath, normalized_levenshtein(xpath, &el.xpath));
     }
     if !fp.ancestors.is_empty() {
         // Compare tags, so a renamed class (section.cart -> section.cart-v2) still counts.
         let live_tags: Vec<&str> = el.ancestors.iter().map(|a| ancestor_tag(a)).collect();
         let hits = fp.ancestors.iter().filter(|a| live_tags.contains(&ancestor_tag(a))).count();
-        acc.add(W_ANCESTORS, hits as f64 / fp.ancestors.len() as f64);
+        acc.add(w.ancestors, hits as f64 / fp.ancestors.len() as f64);
     }
     if !fp.neighbors.is_empty() {
         let stored: Vec<String> = fp.neighbors.iter().map(|n| normalize_text(n)).collect();
         let live: Vec<String> = el.neighbors.iter().map(|n| normalize_text(n)).collect();
-        acc.add(W_NEIGHBORS, jaccard(stored.iter().map(String::as_str), live.iter().map(String::as_str)));
+        acc.add(w.neighbors, jaccard(stored.iter().map(String::as_str), live.iter().map(String::as_str)));
     }
     if let (Some(stored), Some(live)) = (fp.rect, el.rect) {
-        acc.add(W_RECT, rect_score(stored, live));
+        acc.add(w.rect, rect_score(stored, live));
     }
     acc.value()
 }

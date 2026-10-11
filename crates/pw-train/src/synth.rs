@@ -734,10 +734,49 @@ pub fn variant(rng: &mut Rng, base: &Node) -> Variant {
     Variant { html: format!("<!doctype html>{}", root.render()), mutations: chosen, gold_present }
 }
 
+/// The page as a site would serve it: the generator's gold marker removed. The marker is how the benchmark finds
+/// the answer. A relocation that could see it would match the answer for free, because a stored fingerprint keeps
+/// every attribute. Removing it does not change element indices.
+pub fn strip_gold(html: &str) -> String {
+    html.replace(" data-pwgold=\"1\"", "")
+}
+
+/// The drift one site change can cause to a single target at once: its id is dropped, its text changes, and
+/// it moves (and sometimes it is wrapped). The target is never deleted. The benchmark reports this case on its
+/// own (`Drift::Compound`), because a random mix of 1 to 3 mutations rarely produces it.
+pub fn compound_variant(rng: &mut Rng, base: &Node) -> Variant {
+    let mut root = base.clone();
+    let mut steps = vec![Mutation::DropIds, Mutation::Retext, Mutation::MoveGold];
+    if rng.chance(0.5) {
+        steps.push(Mutation::WrapGold);
+    }
+    let mut chosen = Vec::new();
+    for m in steps {
+        if apply(rng, &mut root, m) {
+            chosen.push(m);
+        }
+    }
+    let gold_present = root.count_gold() == 1;
+    Variant { html: format!("<!doctype html>{}", root.render()), mutations: chosen, gold_present }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pw_core::snapshot::Snapshot;
+
+    #[test]
+    fn stripping_the_marker_keeps_the_gold_element_at_the_same_index() {
+        let mut rng = Rng::new(3);
+        let page = make_site(&mut rng, SiteKind::Checkout).render();
+        let html = format!("<!doctype html>{page}");
+        let marked = Snapshot::parse(&html);
+        let clean = Snapshot::parse(&strip_gold(&html));
+        let gold = marked.elements().iter().find(|e| e.attrs.contains_key("data-pwgold")).unwrap().index;
+        assert_eq!(clean.len(), marked.len());
+        assert!(clean.elements().iter().all(|e| !e.attrs.contains_key("data-pwgold")));
+        assert_eq!(clean.element(gold).unwrap().tag, marked.element(gold).unwrap().tag);
+    }
 
     #[test]
     fn same_seed_same_page() {

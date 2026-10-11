@@ -2,6 +2,7 @@ target/
 __pycache__/
 *.pyc
 .venv/
+.venv-gpu/
 runs/
 data/
 kaggle/secrets/
@@ -15,3 +16,4 @@ kaggle/plan6/
 # Plan folders hold the notebooks that embed the coordinator token. Never commit them.
 kaggle/plan*/
 .~lock.*#
+models/
