@@ -1,0 +1,120 @@
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 683,
+    "correct": 552,
+    "wrong_match": 21,
+    "ambiguous": 91,
+    "broken": 19,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 3
+  },
+  "deleted": {
+    "cases": 217,
+    "correct": 0,
+    "wrong_match": 40,
+    "ambiguous": 5,
+    "broken": 172,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 4
+  },
+  "selector_only_present": {
+    "cases": 683,
+    "correct": 599,
+    "wrong_match": 30,
+    "ambiguous": 0,
+    "broken": 54,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 16
+  },
+  "selector_only_deleted": {
+    "cases": 217,
+    "correct": 0,
+    "wrong_match": 59,
+    "ambiguous": 0,
+    "broken": 158,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 23
+  }
+}
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 708,
+    "correct": 564,
+    "wrong_match": 18,
+    "ambiguous": 105,
+    "broken": 21,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 2
+  },
+  "deleted": {
+    "cases": 192,
+    "correct": 0,
+    "wrong_match": 25,
+    "ambiguous": 13,
+    "broken": 154,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 2
+  },
+  "selector_only_present": {
+    "cases": 708,
+    "correct": 620,
+    "wrong_match": 35,
+    "ambiguous": 0,
+    "broken": 53,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 16
+  },
+  "selector_only_deleted": {
+    "cases": 192,
+    "correct": 0,
+    "wrong_match": 55,
+    "ambiguous": 0,
+    "broken": 137,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 26
+  }
+}
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 900,
+    "correct": 848,
+    "wrong_match": 5,
+    "ambiguous": 21,
+    "broken": 26,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 3
+  },
+  "deleted": {
+    "cases": 0,
+    "correct": 0,
+    "wrong_match": 0,
+    "ambiguous": 0,
+    "broken": 0,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "selector_only_present": {
+    "cases": 900,
+    "correct": 653,
+    "wrong_match": 80,
+    "ambiguous": 0,
+    "broken": 167,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 44
+  },
+  "selector_only_deleted": {
+    "cases": 0,
+    "correct": 0,
+    "wrong_match": 0,
+    "ambiguous": 0,
+    "broken": 0,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  }
+}
