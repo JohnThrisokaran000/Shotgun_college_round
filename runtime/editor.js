@@ -33,6 +33,10 @@
     '<option value="after">Insert after the selected element</option><option value="replace">Replace its content</option></select></div>' +
     '<textarea data-pw-html placeholder="<p>HTML</p>" style="width:100%;height:48px" disabled></textarea>' +
     '<label style="display:block;margin-top:6px">Note<input data-pw-note placeholder="why" style="width:100%"></label>' +
+    '<div data-pw-pending style="margin-top:8px;border-top:1px solid #ddd;padding-top:6px"><b>Pending changes</b>' +
+    '<ul data-pw-list style="margin:4px 0 0 16px;padding:0;font-size:12px"></ul></div>' +
+    '<div data-pw-error style="color:#b00020;min-height:1em;margin-top:4px"></div>' +
+    '<button data-pw-reset disabled style="margin-top:6px">Discard changes</button> ' +
     '<button data-pw-save disabled style="margin-top:6px">Save draft patch</button>';
   document.body.appendChild(box);
 
@@ -108,6 +112,7 @@
     controls.forEach(function (c) { c.disabled = false; });
     textInput.disabled = el.children.length > 0;
     say("<" + el.tagName.toLowerCase() + (el.id ? " id=" + el.id : "") + "> selected");
+    refresh();
   }
 
   [["text", textInput], ["bg", bgInput], ["fg", fgInput], ["href", hrefInput]].forEach(function (pair) {
@@ -133,6 +138,7 @@
       moveTarget = ev.target;
       moveTarget.style.outline = "2px dotted #0a7d32";
       say("Will move the selected element " + moveDirection + " " + cssPath(moveTarget) + ". Save to keep it.");
+      refresh();
       return;
     }
     select(ev.target);
@@ -166,10 +172,69 @@
     return ops;
   }
 
+  // The pending list: what a save will write, in words. Text goes in as text, never as markup.
+  function snippet(s) { return s.length > 40 ? s.slice(0, 40) + "..." : s; }
+  function describe(op) {
+    switch (op.op) {
+      case "setText": return "text: " + JSON.stringify(op.value);
+      case "setStyle": return ({ "background-color": "background", "color": "text colour", "font-size": "font size" })[op.prop] + ": " + op.value;
+      case "addClass": return "add class " + op.name;
+      case "removeClass": return "remove class " + op.name;
+      case "setAttr": return op.name + ": " + op.value;
+      case "hide": return "hide";
+      case "show": return "show";
+      case "moveBefore": return "move before " + op.target;
+      case "moveAfter": return "move after " + op.target;
+      case "onClickNavigate": return "click: go to " + op.href;
+      case "onClickSubmit": return "click: submit the form";
+      case "onClickFetch": return "click: fetch " + op.url;
+      case "disable": return "disable";
+      case "enable": return "enable";
+      case "insertBefore": return "insert before " + op.target + ": " + snippet(op.html);
+      case "insertAfter": return "insert after " + op.target + ": " + snippet(op.html);
+      case "setHTML": return "replace content: " + snippet(op.value);
+      default: return op.op;
+    }
+  }
+  // The same rules the DSL applies (crates/pw-core/src/dsl.rs): a same-site path, and length limits.
+  var MAX_SHORT = 200, MAX_VALUE = 4000;
+  function localPath(v) {
+    return v.charAt(0) === "/" && v.indexOf("//") !== 0 && v.indexOf("\\") < 0 && !/[\s\x00-\x1f\x7f]/.test(v) && v.length <= MAX_SHORT;
+  }
+  function problems(ops) {
+    var out = [];
+    ops.forEach(function (op) {
+      if (op.op === "onClickNavigate" && !localPath(op.href)) out.push("a click target must be a same-site path starting with a single /");
+      if (op.op === "onClickFetch" && !localPath(op.url)) out.push("a click target must be a same-site path starting with a single /");
+      if (op.op === "setAttr" && op.name === "href" && !localPath(op.value)) out.push("the link must be a same-site path starting with a single /");
+      if (op.op === "setText" && op.value.length > MAX_VALUE) out.push("the text is too long");
+      if (op.op === "setHTML" && op.value.length > MAX_VALUE) out.push("the HTML is too long");
+      if ((op.op === "insertBefore" || op.op === "insertAfter") && op.html.length > MAX_VALUE) out.push("the HTML is too long");
+    });
+    return out.filter(function (m, i) { return out.indexOf(m) === i; });
+  }
+  function refresh() {
+    var list = box.querySelector("[data-pw-list]"), errorLine = box.querySelector("[data-pw-error]");
+    list.textContent = "";
+    var ops = selected ? collectOps() : [];
+    ops.forEach(function (op) { var li = document.createElement("li"); li.textContent = describe(op); list.appendChild(li); });
+    if (!ops.length) { var none = document.createElement("li"); none.textContent = "No changes yet."; list.appendChild(none); }
+    var errs = problems(ops);
+    errorLine.textContent = errs.join("; ");
+    saveBtn.disabled = !selected || ops.length === 0 || errs.length > 0;
+    ui("reset").disabled = !selected;
+  }
+  controls.forEach(function (c) {
+    c.addEventListener("input", refresh);
+    c.addEventListener("change", refresh);
+  });
+  ui("reset").addEventListener("click", function () { if (selected) select(selected); });
+
   saveBtn.addEventListener("click", function () {
     if (!selected || typeof window.__pwSave !== "function") return;
     var ops = collectOps();
     if (!ops.length) { say("Nothing to save yet."); return; }
+    if (problems(ops).length) { say("Fix the field marked in red before saving."); return; }
     var index = pageElements().indexOf(selected);
     window.__pwSave(JSON.stringify({ index: index, page: location.pathname, ops: ops, note: noteInput.value || "" }));
     say("Saved a draft patch. Next: pw review propose <id>.");
