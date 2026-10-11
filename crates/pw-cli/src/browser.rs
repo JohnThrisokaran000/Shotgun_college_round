@@ -675,6 +675,80 @@ mod tests {
         assert!(checks.iter().any(|c| c.patch == "add-to-cart-wrong" && c.outcome == Outcome::Fail), "{checks:?}");
     }
 
+    /// Read the text a page expression returns, for the editor's visible state.
+    async fn read_text(page: &Page, expression: &str) -> String {
+        match page.evaluate::<(), Option<Value>>(&format!("() => {expression}"), None).await.unwrap() {
+            Some(Value::String(s)) => s,
+            other => panic!("expected text from `{expression}`, got {other:?}"),
+        }
+    }
+
+    /// The pending list shows what a save will write as the fields change. A link that is not a same-site path
+    /// is named in the error and keeps Save disabled. "Discard changes" restores the element's fields. Runs in a
+    /// real browser.
+    #[tokio::test]
+    #[ignore = "needs Chromium (`pw browser install`); run with `cargo test -p pw-cli -- --ignored`"]
+    async fn the_editor_lists_pending_changes_and_blocks_an_unsafe_link() {
+        let base = serve(SITE);
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-tmp/editor-pending");
+        let _ = fs::remove_dir_all(&root);
+        Project::init(&root, "editor-test", &base).unwrap();
+
+        let (_pw, browser) = launch(false).await.unwrap();
+        let page = browser.new_page().await.unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        page.expose_function("__pwSave", move |args: Vec<Value>| {
+            let tx = tx.clone();
+            async move {
+                if let Some(text) = args.first().and_then(|v| v.as_str()) {
+                    let _ = tx.send(text.to_string());
+                }
+                Value::Null
+            }
+        })
+        .await
+        .unwrap();
+        page.goto(&format!("{base}/?pw_edit=1"), None).await.unwrap();
+        let inject = format!("() => {{\n{EDITOR_JS}\n}}");
+        page.evaluate::<(), Option<Value>>(&inject, None).await.unwrap();
+
+        // The pending list follows the fields as they are typed.
+        page.locator("#buy").click(None).await.unwrap();
+        page.locator("[data-pw-text]").fill("Checkout now", None).await.unwrap();
+        let pending = read_text(&page, "document.querySelector('[data-pw-list]').textContent").await;
+        assert!(pending.contains("Checkout now"), "the pending list shows the change: {pending}");
+
+        // A link that is not a same-site path is named in the error, and Save stays disabled.
+        page.locator("[data-pw-behaviour]").select_option("navigate", None).await.unwrap();
+        page.locator("[data-pw-barg]").fill("javascript:alert(1)", None).await.unwrap();
+        let error = read_text(&page, "document.querySelector('[data-pw-error]').textContent").await;
+        assert!(error.contains("same-site path"), "{error}");
+        let disabled = page
+            .evaluate::<(), Option<Value>>("() => document.querySelector('[data-pw-save]').disabled", None)
+            .await
+            .unwrap();
+        assert_eq!(disabled, Some(Value::Bool(true)));
+
+        // A same-site path clears the error, and the save is written.
+        page.locator("[data-pw-barg]").fill("/order/confirm", None).await.unwrap();
+        let error = read_text(&page, "document.querySelector('[data-pw-error]').textContent").await;
+        assert!(error.trim().is_empty(), "{error}");
+        page.locator("[data-pw-save]").click(None).await.unwrap();
+        let message = tokio::time::timeout(Duration::from_secs(20), rx.recv()).await.unwrap().unwrap();
+        let saved = save_from_message(&page, &message, &root, "tester", "tester").await.unwrap();
+
+        // "Discard changes" clears the fields of the selected element.
+        page.locator("#buy").click(None).await.unwrap();
+        page.locator("[data-pw-text]").fill("Pay now", None).await.unwrap();
+        page.locator("[data-pw-reset]").click(None).await.unwrap();
+        let pending = read_text(&page, "document.querySelector('[data-pw-list]').textContent").await;
+        assert!(!pending.contains("Pay now") && pending.contains("No changes yet"), "{pending}");
+        browser.close().await.unwrap();
+
+        let patch = Patch::read(&saved).unwrap();
+        assert!(patch.ops.contains(&Op::OnClickNavigate { href: "/order/confirm".into() }), "{:?}", patch.ops);
+    }
+
     /// The behaviour, insert and replace controls, each saved as its own patch in a real browser.
     #[tokio::test]
     #[ignore = "needs Chromium (`pw browser install`); run with `cargo test -p pw-cli -- --ignored`"]
