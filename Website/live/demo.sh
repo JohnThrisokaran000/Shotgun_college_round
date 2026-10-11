@@ -3,7 +3,10 @@
 # Each step prints the exact `pw` command it runs, from inside the project folder.
 #
 #   Website/live/demo.sh help        list the steps
-#   Website/live/demo.sh up          start the shop and the proxy (do this before the judges arrive)
+#   Website/live/demo.sh doctor      on a new laptop: check everything, rehearse the live minute, then stage it
+#   Website/live/demo.sh stage       before the 5-minute run: start everything and stage it up to the live minute
+#   Website/live/demo.sh shell       a clean terminal for screen sharing
+#   Website/live/demo.sh up          start the shop and the proxy only
 #   Website/live/demo.sh all         run every step, pausing for Enter between them
 #
 # Settings (environment): PW_DEMO_DIR (default /tmp/patchwork-demo), SHOP_PORT (8080), PROXY_PORT (8787),
@@ -49,6 +52,12 @@ run() {
   return 0
 }
 
+LOG=${RUN}.log
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+fail() { bad "$*"; printf '%s\n' "See $LOG"; exit 1; }
+quiet() { "$@" >>"$LOG" 2>&1; }
+
 patch_id() { cat "$RUN/patch-id" 2>/dev/null || echo fix-buy-label; }
 
 need_up() {
@@ -88,19 +97,19 @@ step_up() {
   nohup python3 -m http.server "$SHOP_PORT" --bind 127.0.0.1 --directory "$RUN/site" >"$RUN/shop.log" 2>&1 &
   echo $! >"$RUN/shop.pid"
   wait_http "$SHOP/" || exit 1
-  say "the shop runs at $SHOP/ and nobody will rebuild it"
+  say "shop: $SHOP/"
   run pw init --name northwind --upstream "$SHOP"
   run pw snapshot "$SHOP/" --out snapshots/cart.html
   (cd "$PROJ" || exit 1; nohup "$PW" proxy --listen "127.0.0.1:$PROXY_PORT" >"$RUN/proxy.log" 2>&1 & echo $! >"$RUN/proxy.pid")
   wait_http "$PROXY/" || exit 1
   printf '\n%s\n' "${bold}\$ pw proxy --listen 127.0.0.1:$PROXY_PORT &${off}"
   cat "$RUN/proxy.log"
-  say "visitors use $PROXY/  (same page: no release yet)"
+  say "through PatchWork: $PROXY/"
 }
 
 step_edit() {
   need_up
-  say "click 'Byu now', type the new text, Save; then press Ctrl+C here"
+  say "select an element, edit it, Save; Ctrl+C here when done"
   local before; before=$(ls "$PROJ/patches" 2>/dev/null | wc -l)
   trap ':' INT
   run pw edit "$PROXY/"
@@ -109,6 +118,7 @@ step_edit() {
   if [ -n "$newest" ] && [ "$(ls "$PROJ/patches" | wc -l)" -gt "$before" ]; then
     basename "$newest" .yaml >"$RUN/patch-id"
     say "the editor saved $(patch_id)"
+    run cat "patches/$(patch_id).yaml"
   else
     say "no patch saved; run: $0 fix"
   fi
@@ -129,7 +139,7 @@ step_preview() {
   run pw release --channel production --dry-run --snapshot "$SNAP"
   run pw release --channel preview/fix --snapshot "$SNAP"
   say "preview:    $PROXY/__pw/channel?name=preview/fix"
-  say "production: $PROXY/__pw/channel?name=production   (still says 'Byu now')"
+  say "production: $PROXY/__pw/channel?name=production"
 }
 
 step_verify() { need_up; run pw verify --base "$PROXY" --channel preview/fix; }
@@ -148,7 +158,7 @@ step_ship() { need_up; run pw release --channel production --snapshot "$SNAP"; }
 step_merge() {
   need_up
   run pw merge --with ../teammate/patches --snapshot "$SNAP"
-  say "we agree to keep our label; the teammate drops theirs"
+  say "the teammate removes their conflicting patch"
   run rm ../teammate/patches/buy-label-caps.yaml
   run pw merge --with ../teammate/patches --snapshot "$SNAP" --write
 }
@@ -157,7 +167,6 @@ step_waive() {
   need_up
   run pw --actor teammate release --channel production --snapshot "$SNAP" \
     --waive-review "weekend sale" --waive-verification "weekend sale"
-  say "open $PROXY/__pw/channel?name=production and reload it 3 times (or run: $0 visitors)"
 }
 
 step_visitors() {
@@ -183,7 +192,8 @@ step_audit() {
 step_tamper() {
   need_up
   cp "$PROJ/audit/events.jsonl" "$RUN/events.backup"
-  say "someone rewrites the waiver's reason"
+  run pw audit-verify
+  say "edit one line of the audit log"
   run perl -0pi -e 's/weekend sale/approved by the CTO/' audit/events.jsonl
   run pw audit-verify
 }
@@ -196,11 +206,81 @@ step_restore() {
 
 step_redesign() {
   need_up
-  say "the shop ships a redesign: new class names, no id, a new wrapper"
+  say "the shop's markup changes: new class names, no id, a new wrapper"
   cp "$HERE/shop-redesign/index.html" "$RUN/site/index.html"
   run pw snapshot "$SHOP/" --out snapshots/cart-redesign.html
   run pw check --snapshot /=snapshots/cart-redesign.html
-  say "the live fix still applies through its role locator: open $PROXY/"
+  say "live page: $PROXY/"
+}
+
+# Everything before the live minute of the 5-minute run: the fix is in production, the teammate's
+# banner is merged but not released. On stage you then run: waive, visitors, tamper.
+step_stage() {
+  [ -n "${IN_DOCTOR:-}" ] || : >"$LOG"
+  printf '%s\n' "Staging the live demo (log: $LOG)"
+  ( step_up ) >>"$LOG" 2>&1 || fail "could not start the shop and the proxy (a port may be busy: $0 down)"
+  ok "shop on $SHOP, PatchWork on $PROXY"
+  local s
+  for s in fix check preview verify review ship; do quiet "step_$s"; done
+  [ -s "$PROJ/channels/production.txt" ] || fail "the fix did not reach production"
+  ok "fix verified, approved and released to production ($(cut -c1-8 "$PROJ/channels/production.txt"))"
+  quiet step_merge
+  [ -f "$PROJ/patches/promo-banner.yaml" ] || fail "the teammate's banner was not merged"
+  ok "teammate's banner merged, not released"
+  printf '\n%s\n' "${bold}Ready.${off} Put the shop tab on production: $PROXY/__pw/channel?name=production"
+  printf '%s\n' "Then run: $0 shell"
+}
+
+# A clean terminal for screen sharing: a neutral prompt, no history, no title clutter.
+step_shell() {
+  local rc; rc=$(mktemp)
+  cat >"$rc" <<EOF
+PS1='shop \$ '
+unset PROMPT_COMMAND
+HISTFILE=/dev/null
+printf '\033]0;shop\007'
+cd "$HERE"
+clear
+EOF
+  bash --rcfile "$rc" -i
+  rm -f "$rc"
+}
+
+# Checks this laptop, rehearses the live minute out of sight, then stages it again for the show.
+step_doctor() {
+  export IN_DOCTOR=1
+  : >"$LOG"
+  printf '%s\n' "${bold}PatchWork live demo · setup check${off}"
+  local miss=0 c
+  for c in python3 curl perl; do
+    if command -v "$c" >/dev/null; then ok "$c"; else bad "$c is missing: install it"; miss=1; fi
+  done
+  if [ ! -x "$PW" ]; then
+    printf '%s\n' "  … building pw (first time only, a few minutes)"
+    (cd "$ROOT" && cargo build --release -p pw-cli >>"$LOG" 2>&1) && PW=$ROOT/target/release/pw
+  fi
+  if [ -x "$PW" ]; then ok "pw binary: ${PW#"$ROOT"/}"; else bad "pw would not build: run 'cargo build --release -p pw-cli' in $ROOT"; miss=1; fi
+  if [ -n "$(headless_browser)" ]; then ok "headless Chromium"; else bad "no Chromium: run '$ROOT/target/release/pw browser install'"; miss=1; fi
+  if "$PW" browser status >/dev/null 2>&1; then ok "Playwright Chromium for pw verify"; else bad "pw cannot find its browser: run '$ROOT/target/release/pw browser install'"; miss=1; fi
+  step_down >/dev/null 2>&1
+  for c in "$SHOP_PORT" "$PROXY_PORT"; do
+    if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$c/"; then bad "port $c is busy: close what uses it, or set SHOP_PORT / PROXY_PORT"; miss=1; else ok "port $c is free"; fi
+  done
+  [ "$miss" = 0 ] || { printf '\n%s\n' "Fix the items marked ✗, then run $0 doctor again."; exit 1; }
+  printf '%s\n' "  … rehearsing the live minute (about 30 seconds, nothing opens)"
+  ( step_stage ) >>"$LOG" 2>&1 || { bad "staging failed (see $LOG)"; exit 1; }
+  ok "stage: fix in production, banner merged"
+  local before; before=$(cat "$PROJ/channels/production.txt")
+  quiet step_waive
+  [ "$(cat "$PROJ/channels/production.txt")" != "$before" ] && ok "waive: banner released with both checks skipped" || { bad "waive did not release (see $LOG)"; exit 1; }
+  quiet step_visitors
+  [ "$(cat "$PROJ/channels/production.txt")" = "$before" ] && ok "visitors: production rolled back by itself" || { bad "no rollback (see $LOG)"; exit 1; }
+  if quiet step_tamper && ! (cd "$PROJ" && "$PW" audit-verify >/dev/null 2>&1); then ok "tamper: the audit check caught the edited line"; else bad "the audit check did not catch the edit (see $LOG)"; exit 1; fi
+  quiet step_restore
+  ( step_stage ) >>"$LOG" 2>&1 || { bad "re-staging failed (see $LOG)"; exit 1; }
+  ok "staged again for the show"
+  printf '\n%s\n' "${bold}Ready.${off} Put the shop tab on production: $PROXY/__pw/channel?name=production"
+  printf '%s\n' "Then run: $0 shell"
 }
 
 step_down() {
@@ -233,6 +313,9 @@ usage() {
   cat <<EOF
 PatchWork live demo (real pw binary, real Chromium). Order:
 
+  doctor    check this laptop, rehearse the live minute out of sight, then stage it
+  stage     start everything and run it up to the live minute (before the 5-minute run)
+  shell     a clean terminal for screen sharing: prompt "shop \$", no history
   up        start the shop on :$SHOP_PORT and the proxy on :$PROXY_PORT, snapshot the cart
   edit      visual editor in headed Chromium: select the button, fix it, Save    [R1]
   fix       the same patch without the editor (fallback for edit)               [R1]
@@ -245,7 +328,7 @@ PatchWork live demo (real pw binary, real Chromium). Order:
   waive     the teammate ships with waivers (both are audited)                 [R6 R7]
   visitors  three headless visitors hit errors; the proxy rolls back           [R6]
   audit     the audit log, and the hash chain check                            [R7]
-  tamper    edit one line of the log; the check names it   (restore: undo)    [R7]
+  tamper    the chain verifies; edit one line; the check names it (restore: undo) [R7]
   redesign  the shop changes its markup; the patch is relocated                [R2]
   down      stop the shop and the proxy
   all       every step above except edit, pausing between steps
@@ -258,6 +341,6 @@ EOF
 cmd=${1:-help}
 case "$cmd" in
   help|-h|--help) usage ;;
-  up|edit|fix|check|preview|verify|review|ship|merge|waive|visitors|audit|tamper|restore|redesign|down|all|status) "step_$cmd" ;;
+  doctor|stage|shell|up|edit|fix|check|preview|verify|review|ship|merge|waive|visitors|audit|tamper|restore|redesign|down|all|status) "step_$cmd" ;;
   *) echo "unknown step: $cmd"; usage; exit 1 ;;
 esac

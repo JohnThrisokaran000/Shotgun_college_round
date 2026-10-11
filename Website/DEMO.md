@@ -1,270 +1,236 @@
-# Demo runbook: PatchWork for the judges
+# PatchWork demo · Team Shotgun
 
-How to show everything we built, in 5 or 8 minutes, and what to say at each step. Add 3 minutes to either run for an optional live segment on the real binary.
+Five minutes, four speakers, one story. A junior developer inherits a live website from a senior who has left the company, finds bugs in it, and has to fix them without rebuilding code nobody understands. Every speaker carries the story one step further.
 
-- **The web demo** is `Website/index.html`. It has a presenter mode that walks through the story one step at a time. The step notes in this file match the notes on the page.
-- **The live segment** runs `Website/live/demo.sh`: the real `pw` binary, a real proxy, real Chromium, and a local sample shop. It proves the web demo is not a mock-up.
+- **The presentation** is `Website/index.html` in presenter mode. Press **P**. Its default run is the script below, and the bar and notes show who is speaking.
+- **The live minute** runs `Website/live/demo.sh`: the real `pw` binary, a real proxy and real Chromium in front of a sample shop on the laptop.
+- **Speaker 3's full live run-through** (section 5) shows every feature on the real binary in about seven minutes. Use it when the judges want to see more, or when you have a longer slot.
 
-The console on the web page is a simulation, and the page says so. Its commands, flags and messages come from the real CLI, and its outputs were copied from runs of the binary on the sample shop. If a judge asks whether it's real, say exactly that, then run the live segment.
+The console on the page is a simulation, and the page says so. Its commands and messages come from the real CLI, and its outputs were copied from runs of the binary. The live parts are real.
 
-## 1. Pick a format
+## 0. Quick start for the team
 
-| Format | Length | When to use it |
-|---|---|---|
-| Short run | about 5½ min | A tight slot. Covers all seven brief features, the tracking results and the close. |
-| Full run | about 8½ min | The default. Adds the brief table, `pw check`, the merge conflict, the patch file, hard tracking cases, the architecture and the models. |
-| Either run + live | +3 min | A judge asks "is it real?", or you have the time. Run it after the Audit step or after the close. |
+- **Team hub:** https://claude.ai/artifact/LiG5oifBLKudenYrtPYctA has a shared show clock with cues, each speaker's lines, done-marks, readiness checks and every command with a Copy button. Give each person their own link by adding `#john`, `#s2`, `#s3` or `#s4` to the address. To let teammates tick shared marks, invite them by email as Editors from its Share menu, with the public link off. Otherwise their ticks save only on their own phone.
+- **On a new laptop:** install Rust (`cargo`) and `python3`, then run `git pull`, `cargo build --release -p pw-cli`, `./target/release/pw browser install`, and `Website/live/demo.sh doctor`. `doctor` checks the tools and ports, rehearses the live minute out of sight, and leaves it staged. Every line should show ✓.
+- **For screen sharing:** present `http://127.0.0.1:8000/#share`. Screen-share mode hides the presenter bar, notes and pop-up messages; the clicker still works, **C** toggles the mode, and **V** opens the notes window privately. Use `Website/live/demo.sh shell` for the terminal: it shows a plain `shop $` prompt with no history. Share only the browser window or tab, never the whole screen.
 
-In presenter mode the **Full/Short** button on the bar switches between the two. To open the page already presenting, add `#present` or `#present-short` to its address.
+## 1. Who does what
 
-## 2. Before the judges arrive (T−30 min)
+| Speaker | Role | Speaks | Drives | Takes questions on |
+|---|---|---|---|---|
+| **John Thrisokaran** · team leader | Tells the story, opens and closes | 0:00–0:56, 4:19–4:39 | The clicker for the whole page, and → after the live minute | The problem statement, scope, Kaggle, anything unassigned |
+| **Speaker 2** · product | Plays the junior developer in the web console | 0:56–2:12 | Nothing (John clicks) | The editor, patch safety, review and the release gate |
+| **Speaker 3** · engineering | The live minute, and the full live run-through if asked | 2:12–3:22 | The terminal and the shop tab | The proxy, the runtime, rollback, the audit log, performance |
+| **Speaker 4** · research | The redesign, the models, the evidence | 3:22–4:19 | Clicks "Compound drift" | Tracking, the models, the evaluation |
 
-1. **Serve the page.** Run `cd Website && python3 -m http.server 8000`, then open `http://127.0.0.1:8000/`. Opening `index.html` directly as a file also works, including the presenter-view window.
-2. **Internet.** The 3D globe, the training figure, the fonts and the scroll animations load from CDNs (cdnjs, unpkg, Google Fonts). Open the page once on the venue Wi-Fi so the browser caches them. Without internet the page still works: the console, the presenter mode, the tracking view and every number. Only the two 3D figures stay blank and the fonts fall back.
-3. **Display.** Use 100% zoom in a full-screen window (F11). The console is designed for 1280 px width or more. On a projector at 1024 px it stacks the terminal above the shop, which still works but scrolls more.
-4. **Second screen.** If the laptop drives a projector as a separate display, press **P**, then **Presenter view ⧉**, and drag that window to the laptop screen. It shows the script, the next step and a timer. If the screens are mirrored, leave the notes closed: the judges would see them.
-5. **Rehearse once, then reload.** A reload resets everything: the console, the R1–R7 chips and the timer. The console's **Reset** button resets only the console.
-6. **Live segment (optional).** In a terminal, run `Website/live/demo.sh up`. It starts the shop on :8080 and the proxy on :8787, and it needs `cargo` and `python3`. Leave that terminal open beside the browser, with a large font. Open `http://127.0.0.1:8787/` in a second browser tab.
-7. **Roles, for two people.** One person drives (keyboard, clicks) and the other speaks. Swap at the Results step if you like.
+Fill in the other three names before rehearsing. In the script, "[Speaker 2]" means "say their name".
 
-## 3. Controls
+## 2. Run of show
 
-| Key | Does |
+| Time | Speaker | On screen | Step | Shows |
+|---|---|---|---|---|
+| 0:00 | John | Page: cover | The story | |
+| 0:35 | John | Page: "A typo should not need a redeploy" | Why PatchWork | |
+| 0:56 | Speaker 2 | Page: console | Edit | R1 |
+| 1:24 | Speaker 2 | Page: console | Preview | R4 (R2 runs on the way) |
+| 1:40 | Speaker 2 | Page: console | Verify | R5 |
+| 1:52 | Speaker 2 | Page: console | Review and release | R3 |
+| 2:12 | Speaker 3 | **Terminal + shop tab** | Live on the real binary | R6, R7 |
+| 3:22 | Speaker 4 | Page: tracking | The redesign | R2 |
+| 3:47 | Speaker 4 | Page: models | Models | |
+| 3:57 | Speaker 4 | Page: results | Results | |
+| 4:19 | John | Page: the brief | Close | all seven ticked |
+| 4:39 | | | About 20 seconds spare for hand-offs and applause | |
+
+R1 to R7 are the problem statement's features: R1 visual patching, R2 smart element tracking, R3 collaborative editing, R4 isolated preview, R5 automated verification, R6 versioned deployment and rollback, R7 audit trail. The chips on the presenter bar fill in as each one is shown. The live step ticks R6 and R7 when John moves past it, so the close lands on the brief table with all seven ticked.
+
+## 3. Setup
+
+**T−30 minutes**
+
+1. **Serve the page.** Run `cd Website && python3 -m http.server 8000`, then open `http://127.0.0.1:8000/`. Opening `index.html` as a file also works.
+2. **Internet.** Open the page once on the venue Wi-Fi so the CDN files are cached. Without internet the script still works; only the two 3D figures stay blank.
+3. **Two windows**, so Alt+Tab switches between them. Practise the switch.
+   - Window A: the page, full screen (F11), 100% zoom.
+   - Window B: a terminal in `Website/live` with a large font, beside a browser tab for the shop.
+4. **Second screen, if you have one.** Press **P**, then **Presenter view ⧉**, and drag that window to the laptop. It shows each speaker's lines, the next step and a timer. With mirrored screens, keep the notes closed, or the judges will see them.
+
+**T−10 minutes**
+
+5. In the terminal, run `./demo.sh stage` (about 30 seconds; or `./demo.sh doctor`, which also checks the laptop). It starts the shop and the proxy and runs everything before the live minute: the fix is released to production, and the teammate's banner is merged but not released. It prints a three-line summary. Then run `./demo.sh shell` for the clean terminal you will share.
+6. In the shop tab, open `http://127.0.0.1:8787/__pw/channel?name=production`. This puts the tab on production; a tab left on the preview channel from a rehearsal would hide the banner. It should say **Buy now**.
+
+**T−2 minutes**
+
+7. Open `http://127.0.0.1:8000/#share` (or reload it), which starts the presentation in screen-share mode. One teammate taps **Start** in the hub when John begins.
+
+**Between runs:** run `./demo.sh stage` again, then reload the page. Rehearse at least twice with a stopwatch. The bar shows each step's target time and puts a wavy underline under the timer once you are more than 15 seconds behind.
+
+## 4. The 5-minute script
+
+The **Say** lines are the same text as the notes on the page. Speak them like a story, not a spec sheet.
+
+### 1 · The story · John · 0:00–0:35
+
+**Say.** "Good morning, everyone. I'm John Thrisokaran, team leader of Team Shotgun, and we chose the PatchWork problem statement. Let me start with a story. Imagine I'm a junior developer. I've inherited a website built by a senior developer who has since left the company, and it's already live. Now I find bugs. The 'Buy now' button says 'Byu now' and goes nowhere. A help link points to a page that moved. Small bugs, but they cost money every day, and I can't safely rebuild code I don't understand."
+
+**Do.** John holds the clicker for the whole page.
+
+### 2 · Why PatchWork · John · 0:35–0:56
+
+**Say.** "That's what PatchWork is for. It lets me fix a live website through small, independent patches, without rebuilding the original application. It tracks the elements it changes, catches conflicting or broken patches, tests every change in isolation, and deploys safely, rolling back by itself if anything goes wrong. [Speaker 2] will show you how."
+
+### 3 · Edit · Speaker 2 · 0:56–1:24 · R1
+
+**Say.** "Let me be that junior developer for a minute. On the right is the live shop; on the left, our tool. I put PatchWork in front of the site, and visitors notice nothing. Then I open the visual editor, click the broken button, fix the text and point it at checkout. Watch: when I try a link to another website, it refuses. Save, and that's a patch file. No code, no rebuild."
+
+**Do.** Talk over the animation; it ends when the editor saves.
+
+### 4 · Preview · Speaker 2 · 1:24–1:40 · R4
+
+**Say.** "Can I push it straight to customers? PatchWork says not yet: nobody has reviewed it or tested it. So it goes to a private preview. Same website, two versions: customers still see the typo, and I see the fix."
+
+**Do.** The shop flips from preview to production and back by itself.
+
+### 5 · Verify · Speaker 2 · 1:40–1:52 · R5
+
+**Say.** "Now it tests itself. A real Chrome browser checks that the fix is there, then compares the page pixel by pixel with what customers see. Nothing else moved."
+
+### 6 · Review and release · Speaker 2 · 1:52–2:12 · R3
+
+**Say.** "Then a second pair of eyes. I'm not allowed to approve my own fix. My reviewer approves it, and if anyone edits the patch afterwards, that approval disappears. Now it goes live, as a version we can always return to. [Speaker 3] will show you what happens when someone skips all this."
+
+### 7 · Live on the real binary · Speaker 3 · 2:12–3:22 · R6, R7
+
+Speaker 3 drives; John leaves the page alone until the hand-off. The commands finish in about a second, so all the time is talking.
+
+| Do | Say |
 |---|---|
-| **P** | Start or stop presenter mode (the **▶ Present** button on the cover does the same) |
-| **→**, **Space**, **Page Down** | Next step. Most clickers send Page Down |
-| **←**, **Page Up** | Previous step |
-| **N** | Show or hide the speaker notes on the page |
-| **Home** | First step |
-| **T** | Reset the timer |
-| **Esc** | Leave presenter mode |
-| **J** / **K** | Next or previous sheet, outside presenter mode |
+| Alt+Tab to the terminal and shop tab. Point at **Buy now**. | "This isn't a simulation any more. This is our actual Rust program in front of a real shop on this laptop, and the fix you just saw is live." |
+| `./demo.sh waive` | "Now meet a teammate in a hurry. There's a weekend sale, so they push a promo banner and skip the review and the testing. PatchWork lets them, but it writes down who skipped what, and why." |
+| Reload the shop tab **once**. | "Here's the banner. Looks fine, but it has quietly broken the shop's own JavaScript." |
+| `./demo.sh visitors` | "Now three real visitors arrive. Their browsers hit the error and report it back. Five errors from three visitors, and PatchWork rolls the site back on its own." |
+| Reload the shop tab. | "Banner gone, our fix still there." |
+| `./demo.sh tamper` | "And everything is in a log that can't be edited quietly. Here it checks out. Now someone edits the log to hide the skipped review, and PatchWork points to the exact line that changed." |
+| Alt+Tab back. John presses →. | "[Speaker 4], what happens when the website itself changes?" |
 
-When you move to a console step, the page types that chapter's commands for you. It also types any earlier commands that haven't run yet. If you press → while commands are still running, the page scrolls on and the commands finish in the background. Wait for each chapter to finish before you move on.
+What the terminal shows, from the rehearsal:
 
-The bar at the bottom shows the R1–R7 chips. Each chip fills in once its feature has been demonstrated on screen, and the brief table on sheet 02 ticks the matching row. The close step returns to that table, so the judges see all seven ticked.
+- `waive`: `released … to production (2 patches)`, with both waivers noted.
+- `visitors`: `production ->` steps back to the earlier release by the second visitor, then the logged event: `proxy auto-rollback … Uncaught TypeError: Cannot read properties of null (reading 'textContent')`.
+- `tamper`: `audit ok: 11 events`, then `Error: audit chain broken at line 9: hash does not match the event body (edited)`.
 
-The timer shows the elapsed time and the target for the current step. It is underlined in a wavy line once you are more than 15 seconds behind.
+Reload the shop tab only once after `waive`. Every page load is another visitor, and three visitors with errors trigger the rollback.
 
-## 4. Run of show
+**If the live minute fails:** say "Let me show you the same thing in our console", Alt+Tab back, and click **Rollback (7)**, then **Audit (8)**, above the console. The same lines fit.
 
-R1 to R7 are the brief's features: R1 visual patching, R2 smart element tracking, R3 collaborative editing, R4 isolated preview, R5 automated verification, R6 versioned deployment and rollback, R7 audit trail.
+### 8 · The redesign · Speaker 4 · 3:22–3:47 · R2
 
-| # | Step | Sheet | Shows | Time | Short run |
+**Say.** "Six months later, the agency redesigns the website. New class names, no IDs, everything wrapped in new boxes. A normal CSS selector breaks right here. PatchWork remembers each element the way you would: its text, its neighbours, where it sits on the page. So it finds the button again. And when too much has changed at once, it doesn't guess; it asks a person."
+
+**Do.** Click **Compound drift** on "too much has changed".
+
+### 9 · Models · Speaker 4 · 3:47–3:57
+
+**Say.** "To handle those hard cases, we built our own models from scratch, including a 126-million-parameter language model trained across 26 Kaggle GPUs."
+
+### 10 · Results · Speaker 4 · 3:57–4:19
+
+**Say.** "And we tested them honestly: rules written before the tests, each test set used once. When an element changes everything at once, the simple method finds a third; our model finds about nine in ten. It's a little worse on everyday changes, so we kept it optional. Safety first. Back to John."
+
+**Do.** Point at the hard-drift bars, then at the decision.
+
+### 11 · Close · John · 4:19–4:39
+
+**Say.** "So, back to our junior developer. The typo is fixed, the bad release rolled itself back, and every change is on record, all without touching the senior developer's code or rebuilding the site. That's all seven features from the problem statement. Thank you; we'd love your questions."
+
+**Do.** All seven rows are ticked. Pass each question to its owner (section 1).
+
+## 5. Speaker 3's live run-through: everything on the real binary
+
+About seven minutes. It is the same story, told for real in the terminal, from an empty project to a redesign. Use it when a judge says "can we see that for real?", at a demo table, or as the main demo in a longer slot.
+
+**Before you start:**
+- Run `./demo.sh up` in `Website/live`. It wipes the demo and starts fresh, so the 5-minute run needs `./demo.sh stage` again afterwards.
+- Open two browser tabs: the shop directly (`http://127.0.0.1:8080/`) and through PatchWork (`http://127.0.0.1:8787/`).
+- Each command prints the exact `pw` command it runs.
+
+| # | Feature | Run | Show in the browser | Say | You should see |
 |---|---|---|---|---|---|
-| 1 | Cover | 00 | what it is | 0:20 | yes |
-| 2 | The problem | 01 | why | 0:30 | yes |
-| 3 | The brief | 02 | the agenda | 0:20 | |
-| 4 | Console · Edit | 03 | R1 | 0:35 | yes |
-| 5 | Console · Check | 03 | R2 | 0:15 | |
-| 6 | Console · Preview | 03 | R4 | 0:30 | yes |
-| 7 | Console · Verify | 03 | R5 | 0:30 | yes |
-| 8 | Console · Review | 03 | R3, R6 | 0:35 | yes |
-| 9 | Console · Merge | 03 | R3 | 0:30 | |
-| 10 | Console · Auto-rollback | 03 | R6 | 0:40 | yes |
-| 11 | Console · Audit | 03 | R7 | 0:30 | yes |
-| — | *Live segment (optional)* | terminal | R1–R7, for real | 3:00 | |
-| 12 | Anatomy of a patch | 04 | safety | 0:30 | |
-| 13 | Tracking · Redesign | 05 | R2 | 0:25 | yes |
-| 14 | Tracking · Hard cases | 05 | R2 | 0:25 | |
-| 15 | System | 06 | architecture | 0:20 | |
-| 16 | Models | 07 | what we trained | 0:30 | |
-| 17 | Results | 08 | evidence | 0:40 | yes |
-| 18 | Close | 02 | recap | 0:15 | yes |
-
-## 5. The script
-
-Each step has three parts. **Say** is the talk track, and it is the same text as the on-page notes. **Do** is what to click or point at. **If asked** gives short, accurate answers to the questions that step tends to raise.
-
-### 1 · Cover (0:20)
-
-**Say.** "PatchWork fixes live websites without rebuilding them. A fix is a small, safe patch file. A reverse proxy delivers it to visitors' browsers, and every change is previewed, verified in a real browser, reviewed, released, and rolled back by itself if it breaks."
-
-**Do.** Let the globe turn. The bright squares are live patches.
-
-### 2 · The problem (0:30)
-
-**Say.** "Three problems. A one-word typo still goes through commit, build, test, review and deploy. Tools that patch pages with CSS selectors break as soon as a redesign renames a class. And when a fix breaks in visitors' browsers, nobody on the team finds out."
-
-**Do.** Point at the three cells, left to right.
-
-### 3 · The brief (0:20, full run)
-
-**Say.** "The problem statement lists seven features. Each row maps one to our code, the command, and how we tested it. Every Show button runs that feature on this page. I will now run all seven as one real workflow."
-
-**Do.** Point at the Evidence column, then at the R1–R7 chips in the bar.
-
-**If asked "why is R1 half filled?"** "The editor's save path is tested in headless Chromium with the real overlay script. We haven't run an automated test of a headed session, so we mark it honestly."
-
-### 4 · Console · Edit (0:35) — R1
-
-**Say.** "Left, a terminal; right, the live shop. The commands and messages are the real CLI's. We create a project, snapshot the cart, and start the proxy. Visitors see no change yet. Then the visual editor: click the button, fix 'Byu now', point it at checkout. A link to another site is blocked before Save. Save writes a patch file. No code, no rebuild."
-
-**Do.** Wait for the editor panel. It shows the red error on the outside link, and then the save.
-
-**If asked "what else can the editor change?"** "Text, background and text colour, font size, classes, link targets, visibility, moving an element before or after another, click behaviour (navigate, submit, fetch, disable, enable), and inserting or replacing HTML. All of it goes through the same DSL validation."
-
-### 5 · Console · Check (0:15, full run) — R2
-
-**Say.** "pw check finds the element again in the snapshot. Its locators agree, so it is valid on the fast path. What happens after a redesign comes in a minute."
-
-### 6 · Console · Preview (0:30) — R4
-
-**Say.** "Can I push straight to production? The dry run says no: nobody has approved it, and nothing has verified it. So I release to a preview channel. Same URL, two versions. Production still shows the typo; with the preview cookie I see the fix."
-
-**Do.** Click the **production** and **preview/fix** tabs above the shop.
-
-**If asked "how is preview isolated?"** "A cookie selects the channel (`/__pw/channel?name=preview/fix`). The proxy serves each channel its own release manifest. Production visitors never get the preview's patches."
-
-### 7 · Console · Verify (0:30) — R5
-
-**Say.** "pw verify drives real Chromium through the proxy. It checks the patch's assertions, then compares the page with production pixel by pixel, outside the patched element: 0 of about 917,000 pixels changed. A patch that shifts the layout fails here. The result is a record tied to this exact content."
-
-**If asked "what fails it?"** "A failed assertion, a click that lands somewhere else (with `--interact`), or any pixel change outside the patch. A patch that hid the first cart row shifted 508 pixels, and it failed. The default tolerance is exact."
-
-### 8 · Console · Review (0:35) — R3, R6
-
-**Say.** "Review. I propose the patch. I cannot approve my own work, so that is refused. A reviewer approves, and the approval is tied to the content hash: edit the patch and the approval is withdrawn. Now the production release passes the gate. Releases are immutable; a channel is just a pointer."
-
-**Do.** Point at the Releases strip under the stats.
-
-**If asked "is the identity authenticated?"** "No. `--actor` is declared, not checked, and the docs say so. Signing actions is the next step."
-
-### 9 · Console · Merge (0:30, full run) — R3
-
-**Say.** "A teammate worked on another branch. pw merge finds a hard conflict: we both changed the same button's text. Nothing is written until it is resolved. They drop their version, and the merge brings in their promo banner."
-
-**If asked "what about approvals across branches?"** "`pw merge --with-audit` carries an approval over when the content is identical, and records where it came from. If one branch approved a patch and the other rejected the same content, that is a conflict."
-
-### 10 · Console · Auto-rollback (0:40) — R6
-
-**Say.** "The teammate's promo banner is merged, and they are in a hurry. They waive review and verification, and both waivers go into the audit log with the reason. The banner breaks the shop's own JavaScript in visitors' browsers. The runtime sends error beacons; at 5 errors from 3 sessions within a minute, the proxy rolls production back by itself. We ran this on the real binary, and that error text is what real Chromium reported."
-
-**Do.** Watch the error and session meters fill, then the production pointer step back.
-
-**If asked "why 5 and 3?"** "So that one broken browser can't trigger a rollback. The policy is in `pw.toml`. Only error beacons count; 'ok' and 'missing' don't. Each release rolls back at most once."
-
-### 11 · Console · Audit (0:30) — R7
-
-**Say.** "Every step is in a hash-chained log with who did it: the edit, the review, the waivers, the automatic rollback. Someone edits the waiver line to cover it up, and audit-verify names the exact line that changed."
-
-**If asked "can someone rewrite the whole file?"** "Yes, if they can also rewrite the HEAD file next to it, because HEAD is local. Pinning HEAD somewhere else, such as a git commit or a server, closes that gap. DESIGN §4 says so."
-
-### Live segment (optional, 3:00)
-
-Use it here, or after the close. See section 6.
-
-### 12 · Anatomy of a patch (0:30, full run)
-
-**Say.** "This is the patch file. Locators and a fingerprint find the element again; operations change it; assertions check it. The DSL has 18 operations and deliberately no script op. Styles are allowlisted, links must stay on the same site, and inserted HTML is sanitised. A patch cannot run code or send data off-site."
-
-**Do.** Hover A to D on the right, then the struck-out `script` op.
-
-### 13 · Tracking · Redesign (0:25) — R2
-
-**Say.** "Smart tracking. A redesign renames the class, drops the id and wraps the button. The selectors miss, but the fingerprint still matches: tag, text, neighbours, ancestors, position. So the patch is relocated, and the gate wants it verified on preview before it ships."
-
-**If asked "are those scores real?"** "The weights and thresholds are the real defaults. The scores on this sheet are illustrative. The measured results are on sheet 08, and the live segment shows a real relocation at confidence 0.767."
-
-### 14 · Tracking · Hard cases (0:25, full run) — R2
-
-**Say.** "When the id, the text and the position all change, the heuristic does not guess. It asks a person and shows the top three. If the button is deleted, it reports the patch broken and the release is refused. Our learned tracker handles most of these hard cases; the numbers are coming up."
-
-**Do.** Then click **Deleted**.
-
-### 15 · System (0:20, full run)
-
-**Say.** "The architecture. Developer tools and a deterministic Rust core on the left. The proxy is the only part in the request path: it injects one 7.5 KB script and serves each channel its own release. Beacons from visitors drive rollback. The upstream site is never touched."
-
-**If asked about SPAs, CSP or compression.** "The runtime re-applies patches when the page re-renders, and every op is idempotent. The proxy decodes gzip, deflate and brotli, and adjusts the page's Content-Security-Policy so its one script and the beacons are allowed. If it can't decode a response, it passes it through unchanged."
-
-### 16 · Models (0:30, full run)
-
-**Say.** "We also asked whether learning helps tracking. We trained a 126.7-million-parameter language model from scratch with DiLoCo across 13 Kaggle groups, 26 T4 GPUs, syncing over a 2.3 MB/s tunnel: about 2.2 billion tokens. Rust runs it with candle and matches PyTorch to within 3e-6. And a 1.6-million-parameter matcher for tracking."
-
-**If asked "why from scratch?" or "what architecture?"** "The brief asked for it. The layer design follows Gemma 3, as a reference only: we didn't use its weights or its tokenizer."
-
-### 17 · Results (0:40)
-
-**Say.** "We wrote each test rule down before running it, and used each test seed once. When an element loses its id, changes its text and moves, the heuristic relocates about a third. The learned tracker relocates 88 to 94 percent, with almost no wrong matches. On mixed changes it still makes more wrong matches, so by our own rule it is not the default; it ships opt-in. 192 Rust tests and 51 Python tests pass."
-
-**Do.** Point at the hard-drift bars, then at the decision text.
-
-**If asked "so the ML didn't work?"** "On the case the heuristic can't handle, it works: 34% becomes 89% on a fresh seed, with no wrong matches. We didn't make it the default because our pre-registered rule also requires it to be no worse on ordinary changes. The learned gate came within 2 points of that. We'd rather show you the rule we kept than a number we tuned on the test set."
-
-### 18 · Close (0:15)
-
-**Say.** "That is all seven features, end to end, without rebuilding the site. Every number comes from our design doc and model card, with the command that reproduces it. We can run any part of this live on the real binary."
-
-**Do.** All seven rows should be ticked. Take questions.
-
-## 6. Live segment on the real binary (3 min)
-
-Everything here was run on this machine with the release build. The outputs below are the real ones, shortened. `demo.sh` prints each command before it runs it, from inside the project folder, so the judges see exactly what is typed.
-
-Prepare it before the judges arrive: run `Website/live/demo.sh up`. That builds `pw` if needed, starts the shop on :8080 and the proxy on :8787, and snapshots the cart. To start over at any point, run `up` again.
-
-| Step | Command | What the judges see |
-|---|---|---|
-| R1 | `demo.sh edit` | A headed Chromium window with the editor. Click "Byu now", type "Buy now", **Save draft patch**, then press Ctrl+C in the terminal. *Rehearse this first.* If anything goes wrong, run `demo.sh fix`, which writes the same patch. |
-| R2 | `demo.sh check` | `fix-buy-label  /  valid  conf 1.000  locators agree` |
-| R4 | `demo.sh preview` | The production dry run is **BLOCKED** by 2 reasons (not approved, no verification). Then `released 323ccee7… to preview/fix`. Open `http://127.0.0.1:8787/__pw/channel?name=preview/fix` and the button says "Buy now"; `…?name=production` still says "Byu now". |
-| R5 | `demo.sh verify` | `pass visible=true`, `pass textContains Buy now`, `pass visual (0 of 916806 pixels … differ)` |
-| R3 | `demo.sh review` | Self-approval: `Error: … was written by <you>. Another reviewer should approve it`. Then `approved by reviewer`. |
-| R6 | `demo.sh ship` | `released 51b15cb4… to production (1 patches)` |
-| R3 | `demo.sh merge` | `CONFLICT WriteWrite on /: buy-label-caps vs fix-buy-label`. The teammate drops theirs, then `added promo-banner`. |
-| R6 | `demo.sh waive` | `released … to production (2 patches)`, with both waivers noted in the audit log |
-| R6 | `demo.sh visitors` | Three headless visitors load the page. By the third, `production ->` has moved back to the previous release. Instead, you can reload `http://127.0.0.1:8787/` three times in a browser, waiting about 3 seconds each time. |
-| R7 | `demo.sh audit` | `proxy auto-rollback … "evidence":"error beacons (patch -): Uncaught TypeError: Cannot read properties of null (reading 'textContent')"`, then `audit ok: 11 events` (one more if you used the editor) |
-| R7 | `demo.sh tamper` | `Error: audit chain broken at line 9: hash does not match the event body (edited)`: the waiver line. Run `demo.sh restore` afterwards. |
-| R2 | `demo.sh redesign` | The shop ships new markup: `fix-buy-label  /  relocated  conf 0.767  picked candidate 0` |
-
-For the shortest convincing version (90 seconds), run `preview`, `verify` and then `waive` + `visitors`. The judges see isolation, a real browser check and a real automatic rollback. `demo.sh all` runs every step and pauses for Enter between them. Run `demo.sh down` when you finish.
-
-Two things to know:
-
-- In the live run the patch's page is `/`, because the sample shop is served at the root. On the web page it is `/cart`.
-- Release ids are hashes of the release. They match the ones above only when the patch is byte-for-byte the same (the `fix` path).
+| 0 | Setup | `./demo.sh up` | Both tabs, side by side: identical | "This is a real shop on this laptop. Here it is directly, and here it is through PatchWork. Identical: nothing is patched, and nobody rebuilt anything." | `created PatchWork project`, `captured 32 elements`, `PatchWork proxy on …` |
+| 1 | R1 visual patching | `./demo.sh edit` | A Chromium window opens with the PatchWork panel. Click **Byu now**, type **Buy now** in Text. Optionally set Click behaviour to "Navigate to a path on click" with `https://example.com`: a red error appears and Save is disabled. Change it to `/checkout/`. Click **Save draft patch**, then press Ctrl+C in the terminal. | "This is the editor our junior developer uses. Click the element, change it, save. If I try to send the button to another website, it refuses before I can even save." | `saved patches/edit-….yaml (draft …)`, then the patch file |
+| 2 | R2 tracking | `./demo.sh check` | — | "Before anything ships, PatchWork makes sure the patch can still find its button. Every way of finding it agrees." | `valid  conf 1.000  locators agree` |
+| 3 | R4 preview | `./demo.sh preview` | Open `http://127.0.0.1:8787/__pw/channel?name=preview/fix`: **Buy now**. Then `…?name=production`: **Byu now**. Leave the tab on production. | "Can I ship it to customers? Not yet: nobody has reviewed it and nothing has tested it. So it goes to a private preview. Same address; my browser sees the fix, and customers still see the typo." | the dry run `BLOCKED by 2 reason(s)`, then `released … to preview/fix` |
+| 4 | R5 verification | `./demo.sh verify` | — | "A real Chrome browser, running in the background, checks the fix is there and compares every pixel outside the button with what customers see. Zero differences." | `pass visible=true`, `pass textContains Buy now`, `pass visual (0 of 916806 pixels … differ)` |
+| 5 | R3 review | `./demo.sh review` | — | "I try to approve my own fix, and it refuses. A reviewer approves it, and that approval is tied to this exact version of the patch." | `Error: … was written by <you>`, then `approved by reviewer` |
+| 6 | R6 release | `./demo.sh ship` | Reload the PatchWork tab: **Buy now**. Click it: the checkout page. Go back. | "Now it's live for everyone, as a release we can always go back to. And the button finally does its job." | `released … to production (1 patches)` |
+| 7 | R3 merge | `./demo.sh merge` | — | "Meanwhile a teammate fixed the same button on their own branch, in capitals. PatchWork catches the clash and won't merge until we agree. They drop theirs, and their promo banner comes in." | `CONFLICT WriteWrite … buy-label-caps vs …`, then `added promo-banner` |
+| 8 | R6 skipping the gate | `./demo.sh waive` | Reload the PatchWork tab **once**: the banner. | "The teammate is in a hurry for a weekend sale, so they skip review and testing. PatchWork allows it, but records who skipped what and why. The banner is up, and it has quietly broken the shop's own JavaScript." | `released … (2 patches)`, `waived the review gate`, `waived the verification gate` |
+| 9 | R6 rollback | `./demo.sh visitors` | Reload: banner gone, **Buy now** still there. | "Three real visitors arrive. Their browsers hit the error and report it. Five errors from three visitors, and PatchWork rolls production back by itself." | `production ->` steps back; `proxy auto-rollback … Uncaught TypeError …` |
+| 10 | R7 audit trail | `./demo.sh audit` | — | "Here's the whole story in order, with who did what: the release, the test, the review, the merge, the skipped checks, and the automatic rollback, with the browser's actual error." | the log, then `audit ok: 11 events` (12 if you used the editor) |
+| 11 | R7 tamper check | `./demo.sh tamper`, then `./demo.sh restore` | — | "Each line is chained to the one before it. Someone edits the log to hide the skipped review, and PatchWork names the exact line." | `audit ok`, then `audit chain broken at line 9` (line 10 if you used the editor) |
+| 12 | R2 redesign | `./demo.sh redesign` | Reload: still **Buy now**. | "Finally, the agency ships a redesign: new class names, no ID, a new wrapper. Our selector no longer matches, but PatchWork finds the button again from what it remembers, and the live fix never dropped." | `relocated  conf 0.767  picked candidate 0` |
+| — | Finish | `./demo.sh down` | — | | `stopped` |
+
+Things to know:
+- Each step needs the ones before it, so go in order. To show one feature again, start from `./demo.sh up`.
+- `./demo.sh all` runs the whole list and waits for Enter before each step. It uses `fix` instead of the editor.
+- The editor opens a visible browser window. We've tested it only in headless runs, so rehearse it on the demo laptop. If it misbehaves, `./demo.sh fix` writes the same patch: "The editor writes exactly this file."
+- Only `./demo.sh visitors` and the shop tab's reloads count as visitors. Reload just once between `waive` and `visitors`.
+
+## 6. Questions, and who takes them
+
+Keep answers short and honest. Say what you measured and what you didn't.
+
+- **Speaker 3 · "Does it work on real websites?"** "The proxy and the runtime work on any site you can put the proxy in front of; you just watched it on a real shop. Our tracking accuracy numbers are from synthetic sites, though. Measuring on real sites is our next step."
+- **Speaker 3 · "What can't it patch?"** "Anything inside shadow DOM, cross-origin iframes and canvas. And the proxy holds each page in memory, so very large pages cost memory."
+- **Speaker 3 · "What does it cost visitors?"** "One extra script tag: a 7.5 KB runtime, under 3 KB compressed, plus one small request and one beacon per page."
+- **Speaker 3 · "Why five errors from three visitors?"** "So one broken browser can't roll back the whole site. It's a setting in `pw.toml`, and each release can roll back only once."
+- **Speaker 3 · "Can someone rewrite the whole log?"** "Only if they can also rewrite the small HEAD file next to it, which lives on the same machine. Storing that HEAD somewhere else, like a git commit or a server, closes the gap."
+- **Speaker 2 · "Could a patch be used to attack the site?"** "We designed against that. There's no way to write JavaScript in a patch, no event-handler attributes, no links to other sites, and any HTML is cleaned first. Production also needs someone else's approval and a passing test, and any skip is logged."
+- **Speaker 2 · "What else can the editor change?"** "Text, colours, font size, classes, links, visibility, moving elements, what a click does, and inserting or replacing HTML. All of it goes through the same safety rules."
+- **Speaker 2 · "Who is 'reviewer'? Is that a real login?"** "Not yet. Names are declared, not authenticated, and we say so in our docs. Signing each action is the next step."
+- **Speaker 4 · "How do you know a relocation is right?"** "We don't just trust it. Every patch from the editor carries a check of its own text, heuristic relocations are refused unless you explicitly allow them, and production needs a passing test of that exact version."
+- **Speaker 4 · "So the ML didn't work?"** "It did on the case that matters most: when everything about an element changes, it goes from a third to about nine in ten, with no wrong matches. We kept it optional because our own rule, written before the test, says it must also be no worse on everyday changes, and it came within two points. We'd rather keep the rule than bend it."
+- **Speaker 4 · "Why train from scratch? What architecture?"** "The problem statement asked for it. The layer design follows Gemma 3 as a reference; we didn't use its weights or its tokenizer."
+- **John · "Did you use 13 Kaggle accounts?"** "Yes, one per training group. We haven't confirmed whether Kaggle's terms allow that, and our own docs flag it as a risk. We stopped the run on 11 October." Leave it there.
+- **John · "Why so much ML in a patching tool?"** "Tracking elements through a redesign is the hardest part of the problem, and selectors alone fail. We measured whether learning helps, kept the safe method as the default, and published the results either way."
 
 ## 7. If something goes wrong
 
 | Problem | Do this |
 |---|---|
-| The globe or the training figure is blank | No WebGL or no internet. Carry on: nothing else depends on them. |
-| A console chapter stops halfway | Click the same chapter button again. It continues from the first step that isn't done. **Reset** starts the console over. |
-| Presenter keys do nothing | Click on an empty part of the page; the terminal input may have focus. Esc leaves the input. |
-| The Presenter view window doesn't open | Allow pop-ups for the page, or use **N** for on-page notes. |
-| `demo.sh up` says a port is in use | Run `demo.sh down`, or pick other ports: `SHOP_PORT=8090 PROXY_PORT=8797 demo.sh up`. Use the same variables on every later step. |
-| `demo.sh edit` doesn't open a window | Run `demo.sh fix` and carry on. Say: "the editor writes this same file". |
-| `demo.sh visitors` finds no headless Chromium | Run `./target/release/pw browser install`, or reload the proxied page three times in a browser. |
-| The live run misbehaves in any other way | Return to the web console and say what happened. Every step there mirrors the live one. |
+| The live minute fails | Back to the page; click **Rollback (7)** and **Audit (8)** above the console. |
+| `./demo.sh stage` says a port is in use | Run `./demo.sh down`, or use other ports: `SHOP_PORT=8090 PROXY_PORT=8797 ./demo.sh stage`. Use the same variables on every later command, and point the shop tab at the new proxy port. |
+| No banner after `waive` | The tab is on the preview channel. Open `http://127.0.0.1:8787/__pw/channel?name=production`. |
+| The rollback happened before `visitors` | The tab was reloaded too often. Say "the visitors beat us to it", run `./demo.sh visitors` anyway, then reload. |
+| `visitors` finds no headless Chromium | Run `./target/release/pw browser install` beforehand. On stage, reload the shop tab two more times instead, about 3 seconds apart. |
+| A console chapter stops halfway | Click the same chapter button again; it carries on from where it stopped. |
+| Presenter keys do nothing | Click an empty part of the page; the terminal input may have focus. |
+| The globe or the training figure is blank | No WebGL or no internet. Nothing in the script depends on them. |
 
-## 8. Questions to prepare for
+## 8. The 8-minute run
 
-Answer plainly. Say what is measured and what is not.
+Press **5 min** on the presenter bar to switch to **Full**: 18 steps, about 7:45, the same story and the same speakers by section. It adds the problem statement's checklist, the patch check, the merge conflict, what a patch file looks like, the hard tracking cases and the architecture, and it shows the rollback and the audit in the web console. Speaker 3 can still do the live minute after its Audit step. Every line is in the page's notes (N) and the presenter view. To open the page already presenting, add `#present` (or `#present-full`) to its address.
 
-- **"Does it work on real websites?"** "The runtime and proxy work on any site we can put the proxy in front of, and we ran the full path on a sample shop. Our tracking numbers are on synthetic sites only. We haven't benchmarked tracking on real sites yet, and that's the next measurement."
-- **"What can't it patch?"** "Inside shadow DOM, cross-origin iframes, and canvas. The proxy also buffers whole responses, so very large pages use memory."
-- **"What stops a malicious patch?"** "The DSL has no script operation. Attributes starting with `on`, and `style`, `srcdoc` and `srcset`, are refused. Links and fetches must be same-site paths. Inserted HTML goes through ammonia. Production also needs a review by someone else and a passing verification, and anything waived is logged."
-- **"What does it cost visitors?"** "One script tag and a 7.5 KB runtime, about 2.7 KB gzipped, plus one manifest request and one small beacon per page load."
-- **"How do you know a relocation is right?"** "We don't trust it blindly. Every patch the editor makes carries an identity assertion, and the gate refuses heuristic relocations unless you pass `--accept-relocated`. Then production needs a passing verification of that exact content."
-- **"How long did training take, and on what?"** "13 Kaggle groups of 2 T4s each, syncing through a coordinator on a laptop over a Cloudflare tunnel. The shipped weights are round 16: 138 merged deltas, about 2.2 billion tokens, over about 6.6 hours of logged events."
-- **"Did you use 13 Kaggle accounts?"** "Yes, one account per group. We haven't confirmed that Kaggle's terms allow running accounts in parallel like this; `docs/ALIGNMENT.md` flags it as a risk. We stopped the run on 11 October." Don't defend it beyond that.
-- **"Why is most of the code ML if the brief is a patching tool?"** "Smart element tracking is the hardest feature in the brief, and selectors alone fail on redesigns. We measured whether learning helps, kept the safe heuristic as the default, and published the evidence either way."
-- **"Can I try it?"** "Yes. Type in the console, or press any Show button. The repository README has the quick start for the real CLI."
+## 9. Controls
 
-## 9. Where the numbers come from
+| Key | Does |
+|---|---|
+| **P** | Start or stop presenter mode |
+| **→**, **Space**, **Page Down** | Next step. Most clickers send Page Down. On a console step, let the typing finish first |
+| **←**, **Page Up** | Previous step |
+| **N** · **T** · **Esc** | Speaker notes · reset the timer · leave presenter mode |
+
+## 10. Where the numbers come from
 
 | Number | Source |
 |---|---|
 | 192 Rust tests pass (4 browser tests run separately with `--ignored`) | `cargo test --workspace`, 2026-10-11 |
 | 51 Python tests pass | `python -m unittest discover -s training/tests -t .`, 2026-10-11 |
 | 7.5 KB runtime | `runtime/runtime.js` is 7,466 bytes (2,698 gzipped) |
-| 0 of 916,806 pixels; relocated at 0.767; the auto-rollback error text | Live run of `Website/live/demo.sh`, 2026-10-11 |
-| 508 pixels for a layout shift | `docs/DESIGN.md` §6.8 |
-| Hard drift 34.0 → 88.8 (606), 32.4 → 94.2 (909), 31.8 → 88.4 (1414) | `docs/DESIGN.md` §6.10, §6.11, §6.13 |
-| Mixed-drift objectives (404, 505, 808, 811, 1212, 1313) | `docs/DESIGN.md` §6.10, §6.11, §6.13 |
-| LM confidence bar and test seeds 7 and 202 | `docs/DESIGN.md` §6.5 |
-| 126.7M parameters, 2.19B tokens (estimate), 16 rounds, 138 deltas, perplexity 10.1 | `docs/MODELS.md`, `docs/REPORT-2026-10-11.md` |
-| 2.3 MB/s link, 2,000-step syncs, 252 MB deltas | `docs/KAGGLE.md` |
-| Similarity weights and thresholds on sheet 05 | `crates/pw-core/src/similarity.rs`, `crates/pw-core/src/relocate.rs` |
+| 0 of 916,806 pixels; relocated at 0.767; the rollback error text; the tampered line | Rehearsals of `Website/live/demo.sh`, 2026-10-11 |
+| "A third" to "about nine in ten": 34.0 → 88.8 (seed 606), 32.4 → 94.2 (909), 31.8 → 88.4 (1414) | `docs/DESIGN.md` §6.10, §6.11, §6.13 |
+| "Within two points": 425 against 427 on seed 1212 | `docs/DESIGN.md` §6.13 |
+| 126.7M parameters, 26 T4 GPUs in 13 groups, 2.3 MB/s link | `docs/MODELS.md`, `docs/KAGGLE.md` |
+| Rust matches Python to within 3e-6 | `docs/DESIGN.md` §7, item 6 |

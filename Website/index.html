@@ -445,6 +445,9 @@ body.pm.nt .notes{transform:none;visibility:visible;transition:transform .35s cu
 .notes .nx{font-size:13px;color:var(--g2);margin-top:auto;border-top:1px solid var(--ln);padding-top:10px}
 .toast{position:fixed;left:50%;top:16px;transform:translate(-50%,-160%);visibility:hidden;background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:13px;z-index:70;transition:transform .3s,visibility 0s .3s;max-width:calc(100vw - 32px)}
 .toast.on{transform:translate(-50%,0);visibility:visible;transition:transform .3s}
+/* Screen-share mode (C, or #share): nothing backstage on the shared screen. Keys and the clicker still work. */
+body.clean .hud,body.clean .notes,body.clean .toast{display:none!important}
+body.clean .foot .keys{visibility:hidden}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -848,16 +851,16 @@ body.pm.nt .notes{transform:none;visibility:visible;transition:transform .35s cu
     <div class="c s12" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><a class="k" href="#s0">Back to the top</a><a class="k" href="#s2">The brief</a><a class="k solid" href="https://github.com/JohnThrisokaran000/Shotgun_college_round" target="_blank" rel="noopener">Repository ↗</a></div>
   </div>
 </section>
-<div class="foot"><span><span class="kbd">P</span> present · <span class="kbd">J</span> <span class="kbd">K</span> next / previous sheet</span><span>Numbers from docs/DESIGN.md and docs/MODELS.md</span></div>
+<div class="foot"><span class="keys"><span class="kbd">P</span> present · <span class="kbd">J</span> <span class="kbd">K</span> next / previous sheet</span><span>Numbers from docs/DESIGN.md and docs/MODELS.md</span></div>
 </main>
 
 <!-- presenter -->
 <div class="hud" id="hud" role="toolbar" aria-label="Presenter controls">
   <button class="arrow" id="hPrev" aria-label="Previous step">←</button>
-  <div class="hs"><b id="hN">01 / 18</b><span id="hT">Cover</span></div>
+  <div class="hs"><b id="hN">01 / 11 · John</b><span id="hT">Cover · the story</span></div>
   <div class="rq" data-rq="1 2 3 4 5 6 7"></div>
   <div class="ht" id="hTime"><b id="hClock">00:00</b><small id="hPace">target 0:20</small></div>
-  <button id="hTrack" title="Switch between the short and the full run">Full</button>
+  <button id="hTrack" title="Switch between the 5-minute team run and the full run">5 min</button>
   <button id="hNotes" aria-pressed="false" title="Speaker notes (N)">Notes</button>
   <button id="hPop" title="Open the notes in a separate window for a second screen">Presenter view ⧉</button>
   <button class="arrow" id="hNext" aria-label="Next step">→</button>
@@ -902,7 +905,7 @@ function markShown(...rs) {
   onShown.forEach(f => f());
 }
 
-const toast = (() => { let h; return msg => { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(h); h = setTimeout(() => t.classList.remove('on'), 2800); }; })();
+const toast = (() => { let h; return msg => { if (document.body.classList.contains('clean')) return; const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(h); h = setTimeout(() => t.classList.remove('on'), 2800); }; })();
 
 /* ---------------- scrolling ---------------- */
 let lenis = null;
@@ -1900,74 +1903,107 @@ function demo(what) {
 }
 $$('[data-show]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); demo(b.dataset.show); }));
 
-/* ================= presenter mode ================= */
-const STEPS = [
-  { t: 'Cover', sec: '#s0', short: 1, time: 20,
-    say: 'PatchWork fixes live websites without rebuilding them. A fix is a small, safe patch file. A reverse proxy delivers it to visitors\' browsers, and every change is previewed, verified in a real browser, reviewed, released, and rolled back by itself if it breaks.',
-    do: 'Let the globe turn. The bright squares are live patches.' },
-  { t: 'The problem', sec: '#s1', short: 1, time: 30,
-    say: 'Three problems. A one-word typo still goes through commit, build, test, review and deploy. Tools that patch pages with CSS selectors break as soon as a redesign renames a class. And when a fix breaks in visitors\' browsers, nobody on the team finds out.',
-    do: 'Point at the three cells, left to right.' },
-  { t: 'The brief', sec: '#s2', short: 0, time: 20,
-    say: 'The problem statement lists seven features. Each row maps one to our code, the command, and how we tested it. Every Show button runs that feature on this page. I will now run all seven as one real workflow.',
-    do: 'Point at the Evidence column, then the R1–R7 chips in the bar below.' },
-  { t: 'Console · Edit', sec: '#s3', short: 1, time: 35, req: [1], run: () => CON.runTo(1),
-    say: 'Left, a terminal; right, the live shop. The commands and messages are the real CLI\'s. We create a project, snapshot the cart, and start the proxy. Visitors see no change yet. Then the visual editor: click the button, fix "Byu now", point it at checkout. A link to another site is blocked before Save. Save writes a patch file. No code, no rebuild.',
-    do: 'Wait for the editor panel: the red error on the outside link, then Save.' },
-  { t: 'Console · Check', sec: '#s3', short: 0, time: 15, req: [2], run: () => CON.runTo(2),
-    say: 'pw check finds the element again in the snapshot. Its locators agree, so it is valid on the fast path. What happens after a redesign comes in a minute.' },
-  { t: 'Console · Preview', sec: '#s3', short: 1, time: 30, req: [4], run: () => CON.runTo(3),
-    say: 'Can I push straight to production? The dry run says no: nobody has approved it, and nothing has verified it. So I release to a preview channel. Same URL, two versions. Production still shows the typo; with the preview cookie I see the fix.',
-    do: 'Click the production and preview/fix tabs above the shop.' },
-  { t: 'Console · Verify', sec: '#s3', short: 1, time: 30, req: [5], run: () => CON.runTo(4),
-    say: 'pw verify drives real Chromium through the proxy. It checks the patch\'s assertions, then compares the page with production pixel by pixel, outside the patched element: 0 of about 917,000 pixels changed. A patch that shifts the layout fails here. The result is a record tied to this exact content.' },
-  { t: 'Console · Review', sec: '#s3', short: 1, time: 35, req: [3, 6], run: () => CON.runTo(5),
-    say: 'Review. I propose the patch. I cannot approve my own work, so that is refused. A reviewer approves, and the approval is tied to the content hash: edit the patch and the approval is withdrawn. Now the production release passes the gate. Releases are immutable; a channel is just a pointer.',
-    do: 'Point at the Releases strip under the stats.' },
-  { t: 'Console · Merge', sec: '#s3', short: 0, time: 30, req: [3], run: () => CON.runTo(6),
-    say: 'A teammate worked on another branch. pw merge finds a hard conflict: we both changed the same button\'s text. Nothing is written until it is resolved. They drop their version, and the merge brings in their promo banner.' },
-  { t: 'Console · Auto-rollback', sec: '#cbottom', end: 1, short: 1, time: 40, req: [6], run: () => CON.runTo(7),
-    say: 'The teammate\'s promo banner is merged, and they are in a hurry. They waive review and verification, and both waivers go into the audit log with the reason. The banner breaks the shop\'s own JavaScript in visitors\' browsers. The runtime sends error beacons; at 5 errors from 3 sessions within a minute, the proxy rolls production back by itself. We ran this on the real binary, and that error text is what real Chromium reported.',
-    do: 'Watch the error and session meters fill, then the production pointer step back.' },
-  { t: 'Console · Audit', sec: '#cbottom', end: 1, short: 1, time: 30, req: [7], run: () => CON.runTo(8),
-    say: 'Every step is in a hash-chained log with who did it: the edit, the review, the waivers, the automatic rollback. Someone edits the waiver line to cover it up, and audit-verify names the exact line that changed.' },
-  { t: 'Anatomy of a patch', sec: '#s4', short: 0, time: 30,
-    say: 'This is the patch file. Locators and a fingerprint find the element again; operations change it; assertions check it. The DSL has 18 operations and deliberately no script op. Styles are allowlisted, links must stay on the same site, and inserted HTML is sanitised. A patch cannot run code or send data off-site.',
-    do: 'Hover A to D on the right, then the struck-out "script" op.' },
-  { t: 'Tracking · Redesign', sec: '#s5', short: 1, time: 25, req: [2], run: () => TRACK.preset('redesign'),
-    say: 'Smart tracking. A redesign renames the class, drops the id and wraps the button. The selectors miss, but the fingerprint still matches: tag, text, neighbours, ancestors, position. So the patch is relocated, and the gate wants it verified on preview before it ships.' },
-  { t: 'Tracking · Hard cases', sec: '#s5', short: 0, time: 25, req: [2], run: () => TRACK.preset('compound'),
-    say: 'When the id, the text and the position all change, the heuristic does not guess. It asks a person and shows the top three. If the button is deleted, it reports the patch broken and the release is refused. Our learned tracker handles most of these hard cases; the numbers are coming up.',
-    do: 'Then click "Deleted".' },
-  { t: 'System', sec: '#s6', short: 0, time: 20,
-    say: 'The architecture. Developer tools and a deterministic Rust core on the left. The proxy is the only part in the request path: it injects one 7.5 KB script and serves each channel its own release. Beacons from visitors drive rollback. The upstream site is never touched.',
-    do: 'Hover the pw proxy and beacon window blocks.' },
-  { t: 'Models', sec: '#s7', short: 0, time: 30,
-    say: 'We also asked whether learning helps tracking. We trained a 126.7-million-parameter language model from scratch with DiLoCo across 13 Kaggle groups, 26 T4 GPUs, syncing over a 2.3 MB/s tunnel: about 2.2 billion tokens. Rust runs it with candle and matches PyTorch to within 3e-6. And a 1.6-million-parameter matcher for tracking.' },
-  { t: 'Results', sec: '#s8', short: 1, time: 40,
-    say: 'We wrote each test rule down before running it, and used each test seed once. When an element loses its id, changes its text and moves, the heuristic relocates about a third. The learned tracker relocates 88 to 94 percent, with almost no wrong matches. On mixed changes it still makes more wrong matches, so by our own rule it is not the default; it ships opt-in. 192 Rust tests and 51 Python tests pass.',
-    do: 'Point at the hard-drift bars, then the decision text.' },
-  { t: 'Close', sec: '#s2', short: 1, time: 15,
-    say: 'That is all seven features, end to end, without rebuilding the site. Every number comes from our design doc and model card, with the command that reproduces it. We can run any part of this live on the real binary.',
-    do: 'All seven rows should be ticked. Take questions.' },
+/* ================= presenter mode =================
+   The default run: five minutes, four speakers. Speaker 1 also drives the page; Speaker 3 takes the
+   keyboard for the live minute on the real binary (Website/live/demo.sh). */
+const NAMES = { 1: 'John', 2: 'Speaker 2', 3: 'Speaker 3', 4: 'Speaker 4' };
+const WHO = { 1: 'John · host', 2: 'Speaker 2 · product', 3: 'Speaker 3 · engineering', 4: 'Speaker 4 · research' };
+/* The story both runs tell: a junior developer inherits a live site whose author has left, and has to fix it
+   without rebuilding it. Lines in [brackets] are names to say out loud. */
+const S = {
+  story: 'Good morning, everyone. I\'m John Thrisokaran, team leader of Team Shotgun, and we chose the PatchWork problem statement. Let me start with a story. Imagine I\'m a junior developer. I\'ve inherited a website built by a senior developer who has since left the company, and it\'s already live. Now I find bugs. The "Buy now" button says "Byu now" and goes nowhere. A help link points to a page that moved. Small bugs, but they cost money every day, and I can\'t safely rebuild code I don\'t understand.',
+  pitch: 'That\'s what PatchWork is for. It lets me fix a live website through small, independent patches, without rebuilding the original application. It tracks the elements it changes, catches conflicting or broken patches, tests every change in isolation, and deploys safely, rolling back by itself if anything goes wrong.',
+  edit: 'Let me be that junior developer for a minute. On the right is the live shop; on the left, our tool. I put PatchWork in front of the site, and visitors notice nothing. Then I open the visual editor, click the broken button, fix the text and point it at checkout. Watch: when I try a link to another website, it refuses. Save, and that\'s a patch file. No code, no rebuild.',
+  preview: 'Can I push it straight to customers? PatchWork says not yet: nobody has reviewed it or tested it. So it goes to a private preview. Same website, two versions: customers still see the typo, and I see the fix.',
+  verify: 'Now it tests itself. A real Chrome browser checks that the fix is there, then compares the page pixel by pixel with what customers see. Nothing else moved.',
+  review: 'Then a second pair of eyes. I\'m not allowed to approve my own fix. My reviewer approves it, and if anyone edits the patch afterwards, that approval disappears. Now it goes live, as a version we can always return to.',
+  tracking: 'Six months later, the agency redesigns the website. New class names, no IDs, everything wrapped in new boxes. A normal CSS selector breaks right here. PatchWork remembers each element the way you would: its text, its neighbours, where it sits on the page. So it finds the button again.',
+  results: 'And we tested them honestly: rules written before the tests, each test set used once. When an element changes everything at once, the simple method finds a third; our model finds about nine in ten. It\'s a little worse on everyday changes, so we kept it optional. Safety first.',
+  close: 'So, back to our junior developer. The typo is fixed, the bad release rolled itself back, and every change is on record, all without touching the senior developer\'s code or rebuilding the site. That\'s all seven features from the problem statement. Thank you; we\'d love your questions.',
+};
+const LIVE_DO = 'Alt+Tab to the terminal and the shop tab. Run ./demo.sh waive, reload the shop tab once, ./demo.sh visitors, reload the shop tab, ./demo.sh tamper. If the live run fails, come back and click Rollback (7) and Audit (8) above the console.';
+/* ================= the 5-minute team run (default) ================= */
+const TEAM = [
+  { t: 'Cover · the story', who: 1, sec: '#s0', time: 35, say: S.story, do: 'John holds the clicker for the whole page.' },
+  { t: 'Why PatchWork', who: 1, sec: '#s1', time: 21, say: S.pitch + ' [Speaker 2] will show you how.' },
+  { t: 'Console · Edit', who: 2, sec: '#s3', time: 28, req: [1], run: () => CON.runTo(1), say: S.edit,
+    do: 'Talk over the animation; it ends when the editor saves.' },
+  { t: 'Console · Preview', who: 2, sec: '#s3', time: 16, req: [4], run: () => CON.runTo(3), say: S.preview,
+    do: 'The shop flips from preview to production and back by itself.' },
+  { t: 'Console · Verify', who: 2, sec: '#s3', time: 12, req: [5], run: () => CON.runTo(4), say: S.verify },
+  { t: 'Console · Review and release', who: 2, sec: '#s3', time: 20, req: [3], run: () => CON.runTo(5),
+    say: S.review + ' [Speaker 3] will show you what happens when someone skips all this.' },
+  { t: 'Live on the real binary', who: 3, sec: '#s3', time: 70, req: [6, 7], marks: [6, 7],
+    say: 'This isn\'t a simulation any more. This is our actual Rust program in front of a real shop on this laptop, and the fix you just saw is live. Now meet a teammate in a hurry. There\'s a weekend sale, so they push a promo banner and skip the review and the testing. PatchWork lets them, but it writes down who skipped what, and why. Here\'s the banner. Looks fine, but it has quietly broken the shop\'s own JavaScript. Now three real visitors arrive. Their browsers hit the error and report it back. Five errors from three visitors, and PatchWork rolls the site back on its own. Banner gone, our fix still there. And everything is in a log that can\'t be edited quietly. Here it checks out. Now someone edits the log to hide the skipped review, and PatchWork points to the exact line that changed. [Speaker 4], what happens when the website itself changes?',
+    do: LIVE_DO },
+  { t: 'Tracking', who: 4, sec: '#s5', time: 25, req: [2], run: () => TRACK.preset('redesign'),
+    say: S.tracking + ' And when too much has changed at once, it doesn\'t guess; it asks a person.',
+    do: 'Click "Compound drift" on "too much has changed".' },
+  { t: 'Models', who: 4, sec: '#s7', time: 10,
+    say: 'To handle those hard cases, we built our own models from scratch, including a 126-million-parameter language model trained across 26 Kaggle GPUs.' },
+  { t: 'Results', who: 4, sec: '#s8', time: 22, say: S.results + ' Back to John.', do: 'Point at the hard-drift bars, then the decision.' },
+  { t: 'Close', who: 1, sec: '#s2', time: 20, say: S.close,
+    do: 'All seven rows are ticked. Questions: Speaker 2 takes product and safety, Speaker 3 the proxy and the live run, Speaker 4 tracking and models, John the rest.' },
 ];
+/* ================= the longer run, for an 8-minute slot: same story, same speakers by section ================= */
+const FULL = [
+  { t: 'Cover · the story', who: 1, sec: '#s0', time: 35, say: S.story, do: 'John holds the clicker for the whole page.' },
+  { t: 'Why PatchWork', who: 1, sec: '#s1', time: 20, say: S.pitch },
+  { t: 'The brief', who: 1, sec: '#s2', time: 20,
+    say: 'The problem statement asks for seven things: visual patching, smart element tracking, collaboration, isolated preview, automated verification, versioned deployment with rollback, and an audit trail. Each row shows where we built it and how we tested it, and you\'ll watch every one tick off as we go. [Speaker 2], over to you.',
+    do: 'Point at the Evidence column, then the R1–R7 chips in the bar.' },
+  { t: 'Console · Edit', who: 2, sec: '#s3', time: 30, req: [1], run: () => CON.runTo(1), say: S.edit,
+    do: 'Talk over the animation; it ends when the editor saves.' },
+  { t: 'Console · Check', who: 2, sec: '#s3', time: 15, req: [2], run: () => CON.runTo(2),
+    say: 'Before anything ships, PatchWork checks that each patch can still find its element. Here every way of finding the button agrees, so it\'s a clean match.' },
+  { t: 'Console · Preview', who: 2, sec: '#s3', time: 20, req: [4], run: () => CON.runTo(3), say: S.preview,
+    do: 'Click the production and preview/fix tabs above the shop.' },
+  { t: 'Console · Verify', who: 2, sec: '#s3', time: 15, req: [5], run: () => CON.runTo(4), say: S.verify },
+  { t: 'Console · Review', who: 2, sec: '#s3', time: 20, req: [3, 6], run: () => CON.runTo(5), say: S.review,
+    do: 'Point at the Releases strip under the stats.' },
+  { t: 'Console · Merge', who: 2, sec: '#s3', time: 30, req: [3], run: () => CON.runTo(6),
+    say: 'Real teams don\'t work alone. A teammate fixed the same button on their own branch, in capitals. PatchWork spots the clash and won\'t merge until we agree. They drop theirs, and their promo banner comes in. [Speaker 3]?' },
+  { t: 'Console · Auto-rollback', who: 3, sec: '#cbottom', end: 1, time: 40, req: [6], run: () => CON.runTo(7),
+    say: 'Now that teammate is in a hurry. There\'s a weekend sale, so they push the banner and skip review and testing. PatchWork lets them, but it writes down who skipped what, and why. The banner quietly breaks the shop\'s own JavaScript. Visitors\' browsers report the errors, and after five errors from three visitors, PatchWork rolls the site back on its own.',
+    do: 'Watch the error and session meters fill, then the production pointer step back.' },
+  { t: 'Console · Audit', who: 3, sec: '#cbottom', end: 1, time: 30, req: [7], run: () => CON.runTo(8),
+    say: 'Every one of those steps is in a log that can\'t be edited quietly: the fix, the review, the skipped checks, the automatic rollback, and who did each. Someone edits the log to hide the skipped review, and PatchWork points to the exact line. [Speaker 2], what does a patch actually look like?' },
+  { t: 'Anatomy of a patch', who: 2, sec: '#s4', time: 30,
+    say: 'This is a patch: a small file anyone can read. How to find the element, what to change, and how to check it worked. What it can\'t do matters just as much: no custom JavaScript, no links to other sites, and any HTML is cleaned first. A patch can\'t be turned into an attack. [Speaker 4]?',
+    do: 'Hover A to D on the right, then the struck-out "script" op.' },
+  { t: 'Tracking · Redesign', who: 4, sec: '#s5', time: 25, req: [2], run: () => TRACK.preset('redesign'), say: S.tracking },
+  { t: 'Tracking · Hard cases', who: 4, sec: '#s5', time: 25, req: [2], run: () => TRACK.preset('compound'),
+    say: 'But what if almost everything changes at once: new text, new place, no ID? PatchWork doesn\'t guess; it shows a person the three most likely matches. And if the button is gone completely, it refuses to ship the patch at all.',
+    do: 'Then click "Deleted".' },
+  { t: 'System', who: 3, sec: '#s6', time: 20,
+    say: 'Here\'s how it fits together. Developer tools on the left. In the middle, the only thing in the request path: a small proxy that adds one tiny script to each page. The original website, on the right, is never touched.',
+    do: 'Hover the pw proxy and beacon window blocks.' },
+  { t: 'Models', who: 4, sec: '#s7', time: 30,
+    say: 'To handle the hard cases, we built our own models from scratch: a 126-million-parameter language model, trained across 26 GPUs on Kaggle and coordinated from one laptop, and a small 1.6-million-parameter matcher. Our Rust code runs them directly, and agrees with the Python version to within three millionths.' },
+  { t: 'Results', who: 4, sec: '#s8', time: 40, say: S.results + ' And 192 Rust tests and 51 Python tests pass. Back to John.',
+    do: 'Point at the hard-drift bars, then the decision text.' },
+  { t: 'Close', who: 1, sec: '#s2', time: 20, say: S.close, do: 'All seven rows are ticked. Take questions.' },
+];
+
 const PM = (function presenter() {
-  const P = { on: false, i: 0, track: 'full', t0: 0, notes: false, win: null };
-  /* Deep links: #present or #present-short (or ?present&track=short when served locally). */
+  const P = { on: false, i: 0, track: 'team', t0: 0, notes: false, win: null };
+  /* Deep links: #present (the 5-minute team run), #present-full, and #share / #share-full for screen-share mode. */
   const hash = location.hash.slice(1);
-  try { if (new URLSearchParams(location.search).get('track') === 'short' || hash === 'present-short') P.track = 'short'; } catch (e) {}
-  const list = () => P.track === 'short' ? STEPS.filter(s => s.short) : STEPS;
+  try { if (new URLSearchParams(location.search).get('track') === 'full' || /-full$/.test(hash)) P.track = 'full'; } catch (e) {}
+  if (/^share/.test(hash)) document.body.classList.add('clean');
+  function toggleClean() { const on = document.body.classList.toggle('clean'); if (!on) toast('Presenter bar shown. C hides it for screen sharing.'); }
+  const list = () => P.track === 'full' ? FULL : TEAM;
   const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const budgetTo = i => list().slice(0, i + 1).reduce((a, s) => a + s.time, 0);
   function render() {
     const L = list(), s = L[P.i], n = L[P.i + 1];
-    $('#hN').textContent = `${String(P.i + 1).padStart(2, '0')} / ${String(L.length).padStart(2, '0')}`;
+    $('#hN').textContent = `${String(P.i + 1).padStart(2, '0')} / ${String(L.length).padStart(2, '0')} · ${NAMES[s.who]}`;
     $('#hT').textContent = s.t;
-    $('#hTrack').textContent = P.track === 'short' ? 'Short' : 'Full';
-    $('#nPos').textContent = `Step ${P.i + 1} of ${L.length} · about ${s.time} s${s.req ? ' · shows ' + s.req.map(r => 'R' + r).join(' ') : ''}`;
+    $('#hTrack').textContent = P.track === 'full' ? 'Full' : '5 min';
+    $('#nPos').textContent = `${WHO[s.who]} · step ${P.i + 1} of ${L.length} · about ${s.time} s${s.req ? ' · shows ' + s.req.map(r => 'R' + r).join(' ') : ''}`;
     $('#nT').textContent = s.t; $('#nSay').textContent = s.say;
     $('#nDo').textContent = s.do || ''; $('#nDo').hidden = !s.do;
-    $('#nNext').textContent = n ? 'Next: ' + n.t : 'Last step';
+    $('#nNext').textContent = n ? `Next: ${n.t} (${NAMES[n.who]})` : 'Last step';
     $('#hNotes').setAttribute('aria-pressed', P.notes);
     document.body.classList.toggle('nt', P.notes);
     tickClock(); renderPop();
@@ -1994,13 +2030,14 @@ const PM = (function presenter() {
     go(i);
   }
   function stop() { P.on = false; document.body.classList.remove('pm', 'nt'); sheets.forEach(x => x.classList.remove('cur')); if (P.win && !P.win.closed) P.win.close(); }
-  const nextStep = () => P.i < list().length - 1 ? go(P.i + 1) : toast('That was the last step. Esc leaves presenter mode.');
+  /* A step shown outside the page (the live run) marks its features when you move past it. */
+  const nextStep = () => { const cur = list()[P.i]; if (cur.marks) markShown(...cur.marks); if (P.i < list().length - 1) go(P.i + 1); else toast('That was the last step. Esc leaves presenter mode.'); };
   const prevStep = () => go(P.i - 1);
   function toggleTrack() {
-    /* Stay on the same step; if the new run skips it, stay on the last step before it, so → continues from here. */
-    const at = STEPS.indexOf(list()[P.i]); P.track = P.track === 'short' ? 'full' : 'short';
-    const L = list(); let j = -1; L.forEach((s, k) => { if (STEPS.indexOf(s) <= at) j = k; }); P.i = Math.max(0, j);
-    render(); toast(P.track === 'short' ? `Short run: ${L.length} steps, about ${fmt(budgetTo(L.length - 1))}` : `Full run: ${L.length} steps, about ${fmt(budgetTo(L.length - 1))}`);
+    /* Stay on the same sheet: the first step of the other run that shows it, or the start. */
+    const sec = list()[P.i].sec; P.track = P.track === 'full' ? 'team' : 'full';
+    const L = list(); P.i = Math.max(0, L.findIndex(s => s.sec === sec));
+    render(); toast(P.track === 'full' ? `Full run: ${L.length} steps, about ${fmt(budgetTo(L.length - 1))}` : `5-minute team run: ${L.length} steps, about ${fmt(budgetTo(L.length - 1))}`);
   }
   const POP = `<!doctype html><html><head><meta charset="utf-8"><title>PatchWork · presenter view</title><style>
     body{margin:0;background:#0a0a0a;color:#efefec;font:16px/1.5 "Hanken Grotesk",system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
@@ -2031,11 +2068,11 @@ const PM = (function presenter() {
   function renderPop() {
     const w = P.win; if (!w || w.closed) return;
     const d = w.document, L = list(), s = L[P.i], n = L[P.i + 1];
-    d.getElementById('pos').textContent = `Step ${P.i + 1} / ${L.length} · ${P.track}`;
-    d.getElementById('req').textContent = s.req ? 'shows ' + s.req.map(r => `R${r} ${REQ[r]}`).join(' · ') : '';
+    d.getElementById('pos').textContent = `Step ${P.i + 1} / ${L.length} · ${P.track === 'full' ? 'full run' : '5-minute run'}`;
+    d.getElementById('req').textContent = WHO[s.who] + (s.req ? ' · shows ' + s.req.map(r => `R${r} ${REQ[r]}`).join(' · ') : '');
     d.getElementById('title').textContent = s.t; d.getElementById('say').textContent = s.say;
     d.getElementById('do').textContent = s.do || ''; d.getElementById('do').style.display = s.do ? '' : 'none';
-    d.getElementById('next').textContent = n ? 'Next: ' + n.t : 'Last step';
+    d.getElementById('next').textContent = n ? `Next: ${n.t} (${NAMES[n.who]})` : 'Last step';
   }
   function onKey(e) {
     const tgt = e.target;
@@ -2043,6 +2080,8 @@ const PM = (function presenter() {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === 'p' || k === 'P') { e.preventDefault(); P.on ? stop() : start(P.i); return; }
+    if (k === 'c' || k === 'C') { e.preventDefault(); toggleClean(); return; }
+    if ((k === 'v' || k === 'V') && P.on) { e.preventDefault(); openPop(); return; }
     if (P.on) {
       if (['ArrowRight', 'PageDown', ' '].includes(k)) { e.preventDefault(); nextStep(); }
       else if (['ArrowLeft', 'PageUp'].includes(k)) { e.preventDefault(); prevStep(); }
@@ -2066,7 +2105,7 @@ const PM = (function presenter() {
   $('#hPop').addEventListener('click', openPop);
   $('#presentBtn').addEventListener('click', () => start(0));
   onShown.push(renderPop);
-  try { if (new URLSearchParams(location.search).has('present') || /^present/.test(hash)) start(0); } catch (e) {}
+  try { if (new URLSearchParams(location.search).has('present') || /^(present|share)/.test(hash)) start(0); } catch (e) {}
   return { start, stop };
 })();
 
