@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "method": "grid",
+  "setting": {
+    "accept": 0.5,
+    "margin": 0.2,
+    "review": 0.4,
+    "veto": 0.1
+  },
+  "objective_sum": 1183,
+  "slices": [
+    "101:mixed",
+    "102:compound"
+  ],
+  "sites": 300,
+  "variants": 3,
+  "settings_searched": 840,
+  "matcher_sha256": "3fd95ac705e5644eb4f18b6511e6c04aaab8c8256e5d544e018c9d21aa77a50f",
+  "written_by": "pw train track --grid"
+}

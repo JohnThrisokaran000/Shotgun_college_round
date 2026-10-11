@@ -359,6 +359,18 @@ Adoption rule, fixed now and the same as 6.10 on fresh seeds. The combined track
 
 Limits. A pass on synthetic drift does not show performance on real websites (section 8). If the rule fails, the result is reported as it is, and the matcher is not tuned again on these seeds.
 
+Results (2026-10-11, each step run once, nothing re-run; seeds 808, 811 and 909 are spent). Dev: the grid selected accept 0.5, margin 0.2, review 0.4 and veto 0.1 for matcher-v3, with J_dev 1183 (matcher-demo scored 1187 on the same seeds). Raw results: `reports/2026-10-11/results/tracking-v3/`.
+
+| Seed | Drift | J combined | J heuristic | Present wrong (combined, heuristic) | Deleted wrong (combined, heuristic) | Correct present (combined, heuristic) |
+|---|---|---|---|---|---|---|
+| 808 | mixed | 247 | 433 | 21, 7 | 40, 15 | 552 of 683 (80.8%), 543 of 683 (79.5%) |
+| 811 | mixed | 349 | 411 | 18, 10 | 25, 16 | 564 of 708 (79.7%), 541 of 708 (76.4%) |
+| 909 | compound | 823 | 272 | 5, 4 | 0, 0 | 848 of 900 (94.2%), 292 of 900 (32.4%) |
+
+Adoption rule, applied as written: (a) false; (b) false; (c) false; (d) true, a gain of 61.8 points. **Not adopted.** The matcher stays opt-in, and the heuristic stays the default.
+
+What this shows. The lower positive weight did not reduce the mixed-drift errors. It increased deleted-target errors on both mixed seeds. The compound-drift gain holds on a new seed (94.2% against 32.4%). So the positive weight is not the lever for the mixed-drift errors, and section 6.10's conclusion stands: the matcher's errors on mixed targets are the bottleneck. A new change needs a new pre-registered protocol, and the test seeds used here cannot be reused.
+
 ## 7. Deviations from the plan and the brief
 
 1. **Model from scratch, architecture from a reference only.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply. EmbeddingGemma-300M supplies the layer design only. Its weights and tokenizer are not used.
