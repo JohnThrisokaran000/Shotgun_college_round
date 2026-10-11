@@ -1,0 +1,27 @@
+combined grid over 840 settings and 2 slices; top 8 by summed objective (selected: *)
+  accept margin review  veto    objective pres correct
+*   0.80   0.20   0.40  0.40         1187         1352
+    0.80   0.20   0.30  0.40         1187         1352
+    0.80   0.20   0.20  0.40         1187         1352
+    0.80   0.20   0.10  0.40         1187         1352
+    0.80   0.40   0.40  0.40         1187         1342
+    0.80   0.40   0.30  0.40         1187         1342
+    0.80   0.40   0.20  0.40         1187         1342
+    0.80   0.40   0.10  0.40         1187         1342
+selected: accept=0.8 margin=0.2 review=0.4 veto=0.4
+
+seed 101 Mixed:
+held-out sites 300, variants per site 3
+combined, target present           cases    693  correct   78.5%  wrong-match   1.73%  abstain   19.8%
+selector-only, target present      cases    693  correct   85.3%  wrong-match   6.64%  abstain    8.1%
+combined, target deleted           cases    207  correct    0.0%  wrong-match   9.18%  abstain   90.8%
+selector-only, target deleted      cases    207  correct    0.0%  wrong-match  22.22%  abstain   77.8%
+objective 389
+
+seed 102 Compound:
+held-out sites 300, variants per site 3
+combined, target present           cases    900  correct   89.8%  wrong-match   0.22%  abstain   10.0%
+selector-only, target present      cases    900  correct   75.4%  wrong-match   5.11%  abstain   19.4%
+combined, target deleted           cases      0  correct    0.0%  wrong-match   0.00%  abstain    0.0%
+selector-only, target deleted      cases      0  correct    0.0%  wrong-match   0.00%  abstain    0.0%
+objective 798
