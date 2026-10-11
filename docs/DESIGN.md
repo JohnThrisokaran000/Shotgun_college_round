@@ -371,6 +371,14 @@ Adoption rule, applied as written: (a) false; (b) false; (c) false; (d) true, a 
 
 What this shows. The lower positive weight did not reduce the mixed-drift errors. It increased deleted-target errors on both mixed seeds. The compound-drift gain holds on a new seed (94.2% against 32.4%). So the positive weight is not the lever for the mixed-drift errors, and section 6.10's conclusion stands: the matcher's errors on mixed targets are the bottleneck. A new change needs a new pre-registered protocol, and the test seeds used here cannot be reused.
 
+### 6.12 Visual patching and collaboration, and the tracking test (2026-10-11, later)
+
+Collaboration. `pw merge --with-audit DIR --write` carries an approval for the same content from the other branch into this log. Each carried approval is a new event that names the other log and the event it came from. A changed patch does not carry its approval. A rejection on the other branch is reported, not carried. A review that disagrees across branches (approved here, rejected there, the same content) is a hard conflict, and nothing is written. A branch log that does not verify is refused, even for a dry run. The merge compares review digests, so a status change on one branch is not a conflict. Tests: `crates/pw-cli/tests/collab.rs` (five tests; the gate and recovery suites still pass).
+
+Visual patching. The editor lists the pending changes in words as the fields change. A link or click target that is not a same-site path (the DSL's rule, `check_local_path`) disables Save and says why. Text and HTML have the DSL's length limits. "Discard changes" restores the element's fields. Test: `the_editor_lists_pending_changes_and_blocks_an_unsafe_link`, in headless Chromium, with the three earlier editor and click tests. A headed session has not been tested.
+
+Smart element tracking. One pre-registered change was tested (section 6.11). It was not adopted, so no tracking change ships from this round. The compound gain held on a fresh seed. The mixed-drift errors did not improve.
+
 ## 7. Deviations from the plan and the brief
 
 1. **Model from scratch, architecture from a reference only.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply. EmbeddingGemma-300M supplies the layer design only. Its weights and tokenizer are not used.

@@ -139,4 +139,11 @@ Gaps from section 4, in the same order:
 8. Effort off-scope: not changed in this round. The language model's training is the largest share of effort, and its benefit to the patching features is still unshown.
 9. Kaggle terms risk: not changed.
 
+Update, later on 2026-10-11, after the table above:
+
+- Collaboration: approvals carry over a merge for the same content (`pw merge --with-audit`), each recorded with its source. A review that disagrees across branches is a conflict. Tests in `crates/pw-cli/tests/collab.rs`. This closes most of gap 6 for the single-project workflow. Multi-user identity is still declared, not authenticated.
+- Visual patching: the editor lists pending changes and blocks unsafe links before save. Covered by a headless browser test. The headed session is still untested.
+- Smart element tracking: a second pre-registered test (DESIGN 6.11, a positive weight of 0.5) was not adopted. Mixed-drift errors did not fall, so the tracker is unchanged.
+- Correction to the earlier review: the DSL already restricts navigation and fetch targets to same-site paths (`check_local_path`, `crates/pw-core/src/dsl.rs`), and sanitizes inserted HTML. Section 4 item 1's claim about unchecked targets was wrong. The earlier search covered only `patch.rs`.
+
 One correction to section 5 of this report: the claim "the release gate enforces that" was an overstatement when it was written, and it is accurate now only for protected channels. DESIGN section 7, item 2 says this.
