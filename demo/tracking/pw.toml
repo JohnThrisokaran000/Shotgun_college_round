@@ -1,0 +1,8 @@
+name = "tracking-demo"
+upstream = "http://127.0.0.1:8099"
+beacon_window_ms = 60000
+beacon_min_errors = 5
+beacon_min_sessions = 3
+protected_channels = ["production"]
+baseline_channel = "production"
+visual_tolerance = 0.0

@@ -1,0 +1,30 @@
+id: checkout-button-text
+author: harshit
+page: /
+anchor:
+  locators:
+    css: '#buy'
+    role:
+      role: button
+      name: Buy now
+  fingerprint:
+    tag: button
+    text: Buy now
+    attrs:
+      class: btn btn-primary
+      id: buy
+      type: submit
+    ancestors:
+    - form#checkout
+    - section.cart
+    - main
+    neighbors:
+    - Order total
+    - Apply coupon
+ops:
+- op: setText
+  value: Checkout now
+assert:
+- textContains: Checkout now
+status: approved
+reviewer: dev-b

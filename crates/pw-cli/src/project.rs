@@ -241,6 +241,21 @@ pub fn load_snapshots(pairs: &[(String, PathBuf)]) -> Result<BTreeMap<String, Sn
 /// The model, when the command was given `--model`. Loaded once per process.
 static MODEL: std::sync::OnceLock<pw_model::ModelChooser> = std::sync::OnceLock::new();
 
+/// The trained matcher, when the command was given `--matcher`. The combined tracker uses it (docs/DESIGN.md, 6.10).
+static MATCHER: std::sync::OnceLock<pw_model::Matcher> = std::sync::OnceLock::new();
+/// The thresholds and veto of the combined tracker's selected setting on the development split (section 6.10).
+const COMBINED_ACCEPT: f64 = 0.8;
+const COMBINED_MARGIN: f64 = 0.2;
+const COMBINED_REVIEW: f64 = 0.4;
+const COMBINED_VETO: f64 = 0.4;
+
+/// Load the matcher for this process. Refuses a folder that does not load.
+pub fn install_matcher(dir: &Path) -> Result<()> {
+    let matcher = pw_model::Matcher::load(dir).with_context(|| format!("loading the matcher in {}", dir.display()))?;
+    let _ = MATCHER.set(matcher);
+    Ok(())
+}
+
 /// Load the model for this process. Refuses a folder that does not load, so a typo cannot silently fall back.
 pub fn install_model(dir: &Path) -> Result<()> {
     let model = pw_model::Model::load(dir).with_context(|| format!("loading the model in {}", dir.display()))?;
@@ -251,6 +266,11 @@ pub fn install_model(dir: &Path) -> Result<()> {
 
 pub fn relocate_one(patch: &Patch, snap: &Snapshot) -> Result<Outcome> {
     let cfg = RelocateConfig::default();
+    if let Some(matcher) = MATCHER.get() {
+        let cfg = RelocateConfig { matcher_accept: COMBINED_ACCEPT, matcher_margin: COMBINED_MARGIN, matcher_review: COMBINED_REVIEW, ..cfg };
+        let chooser = pw_model::CombinedChooser { matcher, cfg, veto: COMBINED_VETO };
+        return Ok(relocate::relocate(&patch.anchor, snap, &chooser, &cfg)?);
+    }
     let heuristic = Heuristic { cfg };
     match MODEL.get() {
         Some(model) => {

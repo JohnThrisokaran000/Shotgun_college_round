@@ -12,5 +12,5 @@ mod matcher;
 mod model;
 
 pub use chooser::{alone, decide, Judgement, ModelChooser, ModelFirst};
-pub use matcher::{Matcher, MatcherChooser};
+pub use matcher::{CombinedChooser, Matcher, MatcherChooser, MatcherOnly};
 pub use model::{Generation, Model};
