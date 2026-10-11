@@ -1,0 +1,33 @@
+# The patch `pw edit` writes when you select the "Byu now" button, set its text to "Buy now"
+# and its link target to /checkout/, and Save. `demo.sh fix` copies it in when the editor is skipped.
+id: fix-buy-label
+author: you   # demo.sh fix replaces this with your actor name
+page: /
+anchor:
+  locators:
+    css: '#buy'
+    role:
+      role: button
+      name: Byu now
+  fingerprint:
+    tag: button
+    text: Byu now
+    attrs:
+      class: btn btn-primary
+      id: buy
+      type: button
+    ancestors:
+    - div.actions
+    - form#checkout.cart-form
+    - section.cart
+    - main
+    neighbors:
+    - Continue shopping
+ops:
+- op: setText
+  value: Buy now
+- op: onClickNavigate
+  href: /checkout/
+assert:
+- visible: true
+- textContains: Buy now

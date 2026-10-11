@@ -3,15 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-</head>
-<body>
 <title>PatchWork</title>
+<meta name="description" content="PatchWork patches live websites without rebuilding them: a visual editor, smart element tracking, review and merge, isolated preview, verification in a real browser, versioned releases with automatic rollback, and a hash-chained audit trail.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: an engineering drawing set. Each chapter is a "sheet" with a title block; content sits in a hairline 12-col grid.
-   One light sheet (results). Patch = revision. */
+/* Layout: each chapter is a "sheet" with a numbered title bar; content sits in a hairline 12-col grid.
+   One light sheet (results). The R1–R7 chips are the brief's seven features; they fill in as each is demonstrated. */
 :root{
   --bg:#0a0a0a; --s1:#0f0f0f; --s2:#151515; --s3:#1d1d1d;
   --ln:#232323; --ln2:#363636; --g1:#575757; --g2:#8c8c8c; --g3:#bcbcbc; --fg:#efefec;
@@ -33,18 +32,22 @@ h1,h2,h3,p{margin:0}
 .k{display:inline-flex;align-items:center;gap:10px;border:1px solid var(--fg);padding:12px 20px;border-radius:10px;font-size:14px;font-weight:500;text-decoration:none;transition:background .2s,color .2s}
 .k:hover,.k.solid{background:var(--fg);color:var(--bg)}
 .k.solid:hover{background:transparent;color:var(--fg)}
+.kbd{font-family:var(--mono);font-size:11px;border:1px solid currentColor;border-radius:4px;padding:0 5px;opacity:.7}
 
 .page{padding:clamp(10px,2.4vw,32px)}
 
 /* sheet */
-.sheet{border:1px solid var(--ln2);border-radius:16px;overflow:hidden;margin-bottom:clamp(20px,3vw,40px);background:var(--bg);color:var(--fg);position:relative}
-.tb{display:grid;grid-template-columns:64px minmax(0,1fr) auto auto auto;border-bottom:1px solid var(--ln2);font-size:13px}
+.sheet{border:1px solid var(--ln2);border-radius:16px;overflow:hidden;margin-bottom:clamp(20px,3vw,40px);background:var(--bg);color:var(--fg);position:relative;transition:border-color .4s}
+body.pm .sheet.cur{border-color:var(--g2)}
+.tb{display:grid;grid-template-columns:64px minmax(0,1fr) auto;border-bottom:1px solid var(--ln2);font-size:13px}
 .tb>*{padding:13px 20px;border-right:1px solid var(--ln);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tb>*:last-child{border-right:0}
 .tb .no{background:var(--fg);color:var(--bg);font-weight:600;text-align:center}
 .tb .ttl{color:var(--fg);font-weight:500}
-.tb .m{color:var(--g2)}
-@media (max-width:760px){.tb>*{padding:11px 14px}.tb{grid-template-columns:48px 1fr auto}.tb .hide-s{display:none}}
+.tb .rq{display:flex;gap:4px;align-items:center;padding-block:0}
+.rq i{font-style:normal;font-family:var(--mono);font-size:10.5px;line-height:1;border:1px solid var(--ln2);color:var(--g2);padding:4px 6px;transition:background .35s,color .35s,border-color .35s}
+.rq i.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+@media (max-width:760px){.tb>*{padding:11px 14px}.tb{grid-template-columns:48px minmax(0,1fr) auto}.tb .rq i:nth-child(n+4){display:none}}
 .g{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:1px;background:var(--ln)}
 .g>.c{background:var(--bg);padding:clamp(20px,2.4vw,34px);min-width:0;position:relative}
 .g>.c.p0{padding:0}
@@ -53,8 +56,9 @@ h1,h2,h3,p{margin:0}
 @media (max-width:760px){.g>.c{grid-column:span 12}}
 .statement{font-size:clamp(44px,7.4vw,124px)}
 .lead{font-size:clamp(15px,1.15vw,17px);color:var(--g3);max-width:46ch}
+.lede{font-size:14px;color:var(--g3);max-width:44ch;margin:-10px 0 20px}
 
-/* ---------- HERO ---------- */
+/* ---------- COVER ---------- */
 #globe{grid-row:span 3;min-height:min(78vh,760px);overflow:hidden;cursor:grab;touch-action:pan-y}
 #globe:active{cursor:grabbing}
 @media (max-width:1100px){#globe{grid-row:auto;height:64vh;min-height:380px}}
@@ -73,6 +77,7 @@ h1,h2,h3,p{margin:0}
 .readout>*{padding:11px 0;border-bottom:1px dashed var(--ln2)}
 .readout>*:nth-child(even){text-align:right;color:var(--fg);font-variant-numeric:tabular-nums}
 .readout>*:nth-child(odd){color:var(--g2)}
+.cta{display:flex;gap:8px;flex-wrap:wrap}
 .cmds{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:1px;background:var(--ln);border-top:1px solid var(--ln)}
 .cmds a{background:var(--bg);padding:20px 20px 22px;text-decoration:none;display:flex;flex-direction:column;gap:22px;transition:.2s;min-width:0}
 .cmds a:hover{background:var(--fg);color:var(--bg)}
@@ -81,12 +86,17 @@ h1,h2,h3,p{margin:0}
 @media (max-width:1100px){.cmds{grid-template-columns:repeat(4,minmax(0,1fr))}}
 
 /* ---------- PROBLEM ---------- */
-.lane svg{width:100%;height:auto;display:block}
-.lane text{font-family:var(--disp);font-size:11.5px;fill:var(--g2)}
-.lane .bx{fill:var(--bg);stroke:var(--ln2)}
-.lane .bx.w{fill:var(--fg);stroke:var(--fg)}
-.lane .tw{fill:var(--bg)}
-.lane .pth{fill:none;stroke:var(--ln2);stroke-dasharray:2 4}
+.lanes{width:100%;height:auto;display:block}
+.lanes text{font-family:var(--disp);font-size:11.5px;fill:var(--g2)}
+.lanes .lt{fill:var(--fg);font-weight:500}
+.lanes g rect{fill:var(--bg);stroke:var(--ln2);transition:fill .2s,stroke .2s}
+.lanes g text{fill:var(--g2);transition:fill .2s}
+.lanes g.w rect{stroke:var(--fg)}
+.lanes g.w text{fill:var(--fg)}
+.lanes g.on rect{fill:var(--fg);stroke:var(--fg)}
+.lanes g.on text{fill:var(--bg)}
+.lanes .rail{stroke:var(--ln2);stroke-dasharray:2 4}
+.lanes .tok{fill:var(--fg)}
 .drift{font-family:var(--mono);font-size:12.5px}
 .drift .sel{padding:10px 12px;border:1px solid var(--ln2);display:flex;justify-content:space-between;gap:10px}
 .dom{margin-top:12px;border-left:1px solid var(--ln2);padding-left:14px;display:flex;flex-direction:column;gap:6px;color:var(--g2);overflow:hidden}
@@ -106,18 +116,143 @@ h1,h2,h3,p{margin:0}
 /* ---------- BRIEF ---------- */
 .mx{width:100%;border-collapse:collapse;font-size:14px}
 .mx th{font-size:12.5px;color:var(--g2);font-weight:500;text-align:left;padding:14px 20px;border-bottom:1px solid var(--ln2)}
-.mx td{padding:17px 20px;border-bottom:1px solid var(--ln);vertical-align:middle;white-space:nowrap}
+.mx td{padding:15px 20px;border-bottom:1px solid var(--ln);vertical-align:middle;white-space:nowrap}
 .mx tr{transition:background .2s}
 .mx tbody tr:hover{background:var(--s2)}
-.mx td:first-child{font-family:var(--mono);color:var(--g1);width:44px}
+.mx td:first-child{font-family:var(--mono);color:var(--g1);width:44px;transition:color .3s}
+.mx tr.shown td:first-child{color:var(--fg)}
 .mx td.req{font-weight:600;font-size:16px}
 .mx td code,.mx td.wh{font-family:var(--mono);font-size:12px;color:var(--g3)}
+.mx td.ev{font-size:13px;color:var(--g3)}
+.mx td.dm{text-align:right;width:1%}
+.show{font-family:var(--mono);font-size:12px;border:1px solid var(--ln2);padding:7px 12px;border-radius:8px;transition:.2s;white-space:nowrap}
+.show:hover{border-color:var(--fg)}
+.mx tr.shown .show{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.mx tr.shown .show::before{content:"✓ "}
 .dot{display:inline-block;width:11px;height:11px;border:1px solid var(--fg);vertical-align:-1px;margin-right:8px}
 .dot.f{background:var(--fg)}.dot.h{background:linear-gradient(90deg,var(--fg) 50%,transparent 50%)}
 .mxwrap{overflow-x:auto}
-.score7{display:flex;flex-direction:column;justify-content:space-between;height:100%;gap:20px}
-.score7 .big{font-size:clamp(110px,13vw,230px)}
-.legend{display:flex;flex-direction:column;gap:10px;font-size:13px;color:var(--g2)}
+.mxl{display:flex;gap:24px;flex-wrap:wrap;padding:14px 20px;font-size:12.5px;color:var(--g2);border-top:1px solid var(--ln)}
+.mxl .sp{flex:1}
+
+/* ---------- CONSOLE ---------- */
+.chap{display:flex;flex-wrap:wrap;gap:1px;background:var(--ln);border-bottom:1px solid var(--ln)}
+.chap button{flex:1 1 0;min-width:104px;background:var(--bg);padding:11px 14px;display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:1px;text-align:left;transition:background .2s,color .2s;position:relative;overflow:hidden}
+.chap button i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--g2);grid-row:span 2;align-self:center;width:24px;height:24px;border:1px solid var(--ln2);display:grid;place-items:center;border-radius:50%;transition:.25s}
+.chap button b{font-weight:600;font-size:14px;line-height:1.2}
+.chap button span{font-family:var(--mono);font-size:10.5px;color:var(--g2)}
+.chap button:hover{background:var(--s2)}
+.chap button.done i{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.chap button.run{background:var(--fg);color:var(--bg)}
+.chap button.run span{color:var(--bg)}
+.chap button.run i{border-color:var(--bg);color:var(--bg)}
+.chap button.run::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:30%;background:var(--bg);animation:runbar 1.1s linear infinite}
+@keyframes runbar{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
+.chap .ctl{flex:0 0 auto;min-width:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;padding:11px 18px}
+.chap .ctl.solid{background:var(--fg);color:var(--bg)}
+.chap .ctl.solid:hover{background:var(--g3)}
+.term{display:flex;flex-direction:column;height:600px;background:var(--s1)}
+.term-top{display:flex;border-bottom:1px solid var(--ln2);font-family:var(--mono);font-size:12px;min-width:0}
+.term-top>*{padding:12px 16px;border-right:1px solid var(--ln);color:var(--g2);white-space:nowrap}
+.term-top>*:last-child{border-right:0}
+.term-top .on{color:var(--bg);background:var(--fg)}
+.term-top .sp{flex:1;border-right:0;padding:0}
+.term-body{flex:1;overflow-y:auto;padding:14px 16px;font-family:var(--mono);font-size:12.5px;line-height:1.65;cursor:text}
+.term-body .l{white-space:pre-wrap;word-break:break-word;color:var(--g3)}
+.term-body .cmdl{color:var(--fg);margin-top:6px}
+.term-body .dim{color:var(--g1)}
+.term-body .hi{color:var(--bg);background:var(--fg);padding:0 4px}
+.term-body .ok{color:var(--fg);font-weight:600}
+.term-body .bad{color:var(--fg);text-decoration:underline wavy;text-underline-offset:3px}
+.term-body .as{color:var(--g2)}
+.pr{color:var(--g2)}
+.inrow{display:flex;gap:8px;align-items:center;margin-top:6px}
+.inrow input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;caret-color:var(--fg);padding:0}
+.sugg{display:flex;flex-wrap:wrap;gap:1px;background:var(--ln);border-top:1px solid var(--ln2)}
+.sugg button{background:var(--s1);font-family:var(--mono);font-size:12px;padding:13px 16px;flex:1 1 auto;text-align:left;color:var(--g2);transition:.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.sugg button:hover{color:var(--fg);background:var(--s2)}
+.sugg button.nx{background:var(--fg);color:var(--bg);flex-basis:100%}
+.sugg button.nx::before{content:"next  ";opacity:.55}
+.sugg button:disabled{cursor:default;color:var(--g2);background:var(--s1)}
+.bpane{display:flex;flex-direction:column;height:600px;background:var(--s1)}
+.br-top{display:flex;align-items:stretch;border-bottom:1px solid var(--ln2);font-family:var(--mono);font-size:11.5px;min-width:0}
+.br-top>*{padding:12px 16px;border-right:1px solid var(--ln);white-space:nowrap}
+.br-top>*:last-child{border-right:0}
+.chs{display:flex;padding:0!important}
+.chs button,.chs span{padding:12px 14px;font-family:var(--mono);font-size:11.5px;color:var(--g2);border-right:1px solid var(--ln);transition:.2s}
+.chs>*:last-child{border-right:0}
+.chs button:hover{color:var(--fg)}
+.chs button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.chs span{color:var(--g1)}
+.br-url{flex:1;color:var(--g3);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.br-rel{color:var(--g2)}
+.shop{flex:1;background:#ededea;color:#121212;padding:22px 24px;position:relative;overflow:hidden;font-family:var(--disp)}
+.shop-nav{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:1px solid #cfcfca}
+.shop-nav b{font-weight:700;font-size:20px;letter-spacing:-.02em}
+.shop-nav span{font-family:var(--mono);font-size:11px;color:#6d6d6a}
+.row{display:grid;grid-template-columns:52px 1fr auto;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid #d6d6d1}
+.row .th{width:52px;height:52px;background:repeating-linear-gradient(135deg,#c9c9c4 0 6px,#bdbdb8 6px 12px)}
+.row b{font-size:15px;display:block}.row small{font-family:var(--mono);font-size:11px;color:#6d6d6a}
+.sum{display:flex;justify-content:space-between;padding:14px 0 4px;font-size:15px;transition:background .3s}
+.sum.patched{background:rgba(18,18,18,.06);box-shadow:-6px 0 0 rgba(18,18,18,.06),6px 0 0 rgba(18,18,18,.06)}
+.ship{font-family:var(--mono);font-size:11.5px;color:#6d6d6a;margin-bottom:14px}
+.acts{display:flex;gap:10px;flex-wrap:wrap}
+.sb{padding:12px 20px;border:1px solid #121212;font-weight:700;font-size:14px;background:#ededea;color:#121212;position:relative}
+.sb.buy{background:#121212;color:#ededea}
+.sb .tag{position:absolute;right:-1px;top:-19px;font-family:var(--mono);font-size:9px;font-weight:500;background:#ededea;color:#121212;border:1px solid #121212;padding:1px 5px;white-space:nowrap}
+.ov{position:absolute;border:2px solid #1a73e8;pointer-events:none;opacity:0;transition:opacity .2s;z-index:3}
+.ov.on{opacity:1}
+.ov span{position:absolute;left:-2px;top:-21px;background:#1a73e8;color:#fff;font-family:var(--mono);font-size:10px;padding:2px 6px;white-space:nowrap}
+#cur{position:absolute;width:18px;height:18px;pointer-events:none;opacity:0;z-index:6}
+.checks{position:absolute;left:24px;bottom:16px;display:flex;flex-direction:column;gap:3px;font-family:var(--mono);font-size:11px;align-items:flex-start;z-index:4}
+.checks div{background:#121212;color:#ededea;padding:3px 8px;opacity:0;transform:translateX(-10px);transition:.3s}
+.checks div.show{opacity:1;transform:none}
+.edp{position:absolute;right:12px;bottom:12px;width:min(252px,58%);background:#fff;color:#111;border:1px solid #888;border-radius:8px;padding:10px;font:12px/1.4 system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.25);z-index:5;opacity:0;transform:translateY(10px);transition:opacity .25s,transform .25s;pointer-events:none}
+.edp.show{opacity:1;transform:none}
+.edp .st{color:#555;margin:3px 0 6px}
+.edp label{display:block;margin-top:5px}
+.edp .in{display:block;border:1px solid #aaa;border-radius:3px;padding:2px 6px;min-height:21px;font-family:var(--mono);font-size:11.5px;margin-top:1px;overflow:hidden;white-space:nowrap}
+.edp .in.bad{border-color:#b00020}
+.edp .pend{margin-top:7px;border-top:1px solid #ddd;padding-top:5px}
+.edp ul{margin:3px 0 0 16px;padding:0;font-size:11.5px}
+.edp .err{color:#b00020;min-height:1em;font-size:11px;margin-top:3px;white-space:normal;overflow-wrap:anywhere}
+.edp .sv{margin-top:4px;border:1px solid #888;background:#eee;border-radius:3px;padding:3px 8px;display:inline-block;transition:.2s}
+.edp .sv.off{opacity:.4}
+.edp .sv.hit{background:#1a73e8;color:#fff;border-color:#1a73e8}
+.scan{position:absolute;left:0;right:0;top:0;height:2px;background:#121212;box-shadow:0 0 18px 2px rgba(18,18,18,.3);opacity:0;pointer-events:none;z-index:4}
+.scan.go{animation:scan 1.5s cubic-bezier(.4,0,.2,1) forwards}
+@keyframes scan{0%{top:0;opacity:1}92%{opacity:1}100%{top:100%;opacity:0}}
+.mask{position:absolute;border:1.5px dashed #121212;background:repeating-linear-gradient(135deg,rgba(18,18,18,.12) 0 4px,transparent 4px 8px);pointer-events:none;opacity:0;transition:opacity .3s;z-index:3}
+.mask.on{opacity:1}
+.mask span{position:absolute;left:-1px;bottom:-19px;font-family:var(--mono);font-size:9.5px;background:#121212;color:#ededea;padding:1px 6px;white-space:nowrap}
+.btoast{position:absolute;left:50%;top:12px;transform:translate(-50%,-200%);visibility:hidden;background:#121212;color:#ededea;font-family:var(--mono);font-size:11px;padding:5px 10px;white-space:nowrap;transition:transform .3s,visibility 0s .3s;z-index:5}
+.btoast.on{transform:translate(-50%,0);visibility:visible;transition:transform .3s}
+.devt{height:120px;border-top:1px solid var(--ln2);font-family:var(--mono);font-size:11px;padding:8px 12px;overflow:hidden;color:var(--g2);display:flex;flex-direction:column;justify-content:flex-end;gap:2px}
+.devt div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.devt .e{color:var(--fg)}
+.devt .rb{color:var(--bg);background:var(--fg);padding:0 4px}
+.stat{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--ln);border-top:1px solid var(--ln)}
+.stat>div{background:var(--bg);padding:18px 22px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stat b{font-weight:600;letter-spacing:-.03em;font-size:28px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat b.id{font-family:var(--mono);font-weight:500;letter-spacing:0;font-size:20px;line-height:1.4}
+.pips{display:flex;gap:3px}.pips i{flex:1;height:4px;background:var(--s3);transition:background .2s}.pips i.on{background:var(--fg)}
+@media (max-width:900px){.stat{grid-template-columns:repeat(3,1fr)}}
+.rels{display:flex;align-items:center;font-family:var(--mono);font-size:11.5px;overflow-x:auto;min-height:44px}
+.rels .r{border:1px solid var(--ln2);padding:6px 10px;white-space:nowrap;transition:.3s;display:flex;flex-direction:column;gap:1px;line-height:1.35}
+.rels .r small{font-size:10px;color:var(--g2)}
+.rels .r.cur{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.rels .r.cur small{color:var(--bg)}
+.rels .r.dead{text-decoration:line-through;color:var(--g1);border-style:dashed}
+.rels .a{width:18px;height:1px;background:var(--ln2);flex-shrink:0}
+.chain{display:flex;overflow-x:auto;align-items:stretch;min-height:104px}
+.chain .empty{font-family:var(--mono);font-size:12px;color:var(--g1);align-self:center}
+.blk{flex:0 0 190px;border:1px solid var(--ln2);padding:9px 12px;font-family:var(--mono);font-size:10.5px;display:flex;flex-direction:column;gap:3px;color:var(--g2)}
+.blk b{color:var(--fg);font-size:12px;font-weight:500}
+.blk span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.blk.bad{border-color:var(--fg);background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(255,255,255,.08) 7px 9px);color:var(--fg)}
+.lnk{flex:0 0 22px;align-self:center;height:1px;background:var(--ln2);position:relative}
+.lnk.cut{background:transparent;border-top:1px dashed var(--fg)}
+.lnk.cut::after{content:"×";position:absolute;left:6px;top:-11px;color:var(--fg)}
 
 /* ---------- PATCH ---------- */
 .yaml{font-family:var(--mono);font-size:13px;line-height:1.85;margin:0;padding:24px 0;overflow-x:auto}
@@ -141,13 +276,15 @@ h1,h2,h3,p{margin:0}
 .rules div b{font-size:32px;font-weight:600;letter-spacing:-.03em;line-height:1}
 @media (max-width:900px){.rules{grid-template-columns:repeat(2,1fr)}.opgrid{grid-template-columns:repeat(3,1fr)}}
 
-/* ---------- TRACKING 3D ---------- */
+/* ---------- TRACKING ---------- */
 .tg-row{display:flex;flex-wrap:wrap;gap:1px;background:var(--ln);border-bottom:1px solid var(--ln)}
+.tg-row .lbl{background:var(--bg);padding:16px 18px;font-size:12.5px;color:var(--g2);display:flex;align-items:center;white-space:nowrap}
 .tg{flex:1 1 auto;background:var(--bg);padding:16px 20px;font-size:14px;display:flex;align-items:center;gap:9px;transition:.15s;white-space:nowrap}
 .tg::before{content:"";width:9px;height:9px;border:1px solid var(--g2)}
 .tg:hover{background:var(--s2)}
 .tg[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
 .tg[aria-pressed="true"]::before{background:var(--bg);border-color:var(--bg)}
+.tg.ps::before{border-radius:50%}
 #xp{height:560px;perspective:1600px;overflow:hidden;display:grid;place-items:center;background:radial-gradient(circle at 50% 55%,var(--s2),var(--bg) 70%)}
 .xp-scale{width:560px;height:380px;transform-style:preserve-3d}
 .xp-stage{--ex:1;--tx:0deg;--tz:0deg;position:relative;width:560px;height:380px;transform-style:preserve-3d;
@@ -187,7 +324,7 @@ h1,h2,h3,p{margin:0}
 .cand .tr::after{content:"";position:absolute;left:60%;top:-3px;bottom:-3px;width:1px;background:var(--g2)}
 .cand b{text-align:right;font-weight:500;font-variant-numeric:tabular-nums}
 .stamp{display:inline-block;font-weight:600;letter-spacing:-.02em;font-size:44px;line-height:1;padding:8px 20px 10px;border-radius:12px;border:3px solid var(--fg);transform:rotate(-4deg)}
-.stamp.valid{background:var(--fg);color:var(--bg)}
+.stamp.valid,.stamp.relocated{background:var(--fg);color:var(--bg)}
 .stamp.ambiguous{border-style:dashed}
 .stamp.broken{color:var(--g2);border-color:var(--g2);background:repeating-linear-gradient(135deg,transparent 0 8px,rgba(255,255,255,.07) 8px 10px)}
 .vnote{font-size:13.5px;color:var(--g3);margin-top:18px}
@@ -196,79 +333,6 @@ h1,h2,h3,p{margin:0}
 .wbars div{background:var(--bg);padding:18px 18px 16px;display:flex;flex-direction:column;gap:12px;font-size:13px;color:var(--g2);min-width:0}
 .wbars i{display:block;height:28px;background:linear-gradient(0deg,var(--fg) var(--h),var(--s2) var(--h))}
 @media (max-width:900px){.wbars{grid-template-columns:repeat(5,1fr)}#xp{height:440px}}
-
-/* ---------- CONSOLE ---------- */
-.term{display:flex;flex-direction:column;height:600px;background:var(--s1)}
-.term-top{display:flex;border-bottom:1px solid var(--ln2);font-family:var(--mono);font-size:12px}
-.term-top>*{padding:12px 16px;border-right:1px solid var(--ln);color:var(--g2)}
-.term-top .on{color:var(--bg);background:var(--fg)}
-.term-top .sp{flex:1}
-#auto{color:var(--fg);font-family:var(--disp);font-size:13px;font-weight:500;border-right:0}
-#auto:hover{background:var(--fg);color:var(--bg)}
-.term-body{flex:1;overflow-y:auto;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.65;cursor:text}
-.term-body .l{white-space:pre-wrap;word-break:break-word;color:var(--g3)}
-.term-body .cmdl{color:var(--fg)}
-.term-body .dim{color:var(--g1)}
-.term-body .hi{color:var(--bg);background:var(--fg);padding:0 4px}
-.term-body .ok{color:var(--fg);font-weight:600}
-.term-body .bad{color:var(--fg);text-decoration:underline wavy;text-underline-offset:3px}
-.term-body .as{color:var(--g2)}
-.pr{color:var(--g2)}
-.inrow{display:flex;gap:8px;align-items:center}
-.inrow input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;caret-color:var(--fg);padding:0}
-.sugg{display:flex;flex-wrap:wrap;gap:1px;background:var(--ln);border-top:1px solid var(--ln2)}
-.sugg button{background:var(--s1);font-family:var(--mono);font-size:12px;padding:14px 16px;flex:1 1 auto;text-align:left;color:var(--g2);transition:.15s;white-space:nowrap}
-.sugg button:hover{color:var(--fg);background:var(--s2)}
-.sugg button.nx{background:var(--fg);color:var(--bg)}
-.sugg button.nx::before{content:"next  ";opacity:.55}
-.br{display:flex;flex-direction:column;height:600px;background:var(--s1)}
-.br-top{display:flex;align-items:center;border-bottom:1px solid var(--ln2);font-family:var(--mono);font-size:11.5px}
-.br-top>*{padding:12px 16px;border-right:1px solid var(--ln)}
-.br-top>*:last-child{border-right:0}
-.br-url{flex:1;color:var(--g3);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
-.br-ch{color:var(--bg);background:var(--fg);font-size:11.5px}
-.br-ch.off{background:transparent;color:var(--g1)}
-.shop{flex:1;background:#ededea;color:#121212;padding:22px 24px;position:relative;overflow:hidden;font-family:var(--disp)}
-.shop-nav{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:1px solid #cfcfca}
-.shop-nav b{font-weight:700;font-size:20px;letter-spacing:-.02em}
-.shop-nav span{font-family:var(--mono);font-size:11px;color:#6d6d6a}
-.banner{margin-top:14px;background:#121212;color:#ededea;padding:10px 14px;font-size:13px;display:flex;justify-content:space-between;font-family:var(--mono)}
-.row{display:grid;grid-template-columns:52px 1fr auto;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid #d6d6d1}
-.row .th{width:52px;height:52px;background:repeating-linear-gradient(135deg,#c9c9c4 0 6px,#bdbdb8 6px 12px)}
-.row b{font-size:15px;display:block}.row small{font-family:var(--mono);font-size:11px;color:#6d6d6a}
-.sum{display:flex;justify-content:space-between;padding:14px 0;font-size:15px}
-.acts{display:flex;gap:10px;flex-wrap:wrap}
-.sb{padding:12px 20px;border:1px solid #121212;font-weight:700;font-size:14px;background:#ededea;color:#121212;position:relative}
-.sb.buy{background:#121212;color:#ededea}
-.sb .tag{position:absolute;right:-1px;top:-19px;font-family:var(--mono);font-size:9px;font-weight:500;background:#ededea;color:#121212;border:1px solid #121212;padding:1px 5px;white-space:nowrap}
-.ov{position:absolute;border:2px solid #121212;pointer-events:none;opacity:0;transition:opacity .2s}
-.ov span{position:absolute;left:-2px;top:-21px;background:#121212;color:#ededea;font-family:var(--mono);font-size:10px;padding:2px 6px;white-space:nowrap}
-#cur{position:absolute;width:18px;height:18px;pointer-events:none;opacity:0;z-index:5}
-.checks{position:absolute;right:16px;bottom:16px;display:flex;flex-direction:column;gap:3px;font-family:var(--mono);font-size:11px;align-items:flex-end}
-.checks div{background:#121212;color:#ededea;padding:3px 8px;opacity:0;transform:translateX(10px);transition:.3s}
-.checks div.show{opacity:1;transform:none}
-.devt{height:120px;border-top:1px solid var(--ln2);font-family:var(--mono);font-size:11px;padding:8px 12px;overflow:hidden;color:var(--g2);display:flex;flex-direction:column;justify-content:flex-end;gap:2px}
-.devt div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.devt .e{color:var(--fg)}
-.devt .rb{color:var(--bg);background:var(--fg);padding:0 4px}
-.stat{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--ln);border-top:1px solid var(--ln)}
-.stat>div{background:var(--bg);padding:20px 24px;display:flex;flex-direction:column;gap:6px;min-width:0}
-.stat b{font-weight:600;letter-spacing:-.03em;font-size:30px;line-height:1;font-variant-numeric:tabular-nums}
-.pips{display:flex;gap:3px}.pips i{flex:1;height:4px;background:var(--s3)}.pips i.on{background:var(--fg)}
-@media (max-width:900px){.stat{grid-template-columns:repeat(3,1fr)}}
-.rels{display:flex;align-items:center;font-family:var(--mono);font-size:12px;overflow-x:auto;min-height:32px}
-.rels .r{border:1px solid var(--ln2);padding:6px 10px;white-space:nowrap;transition:.3s}
-.rels .r.cur{background:var(--fg);color:var(--bg);border-color:var(--fg)}
-.rels .r.dead{text-decoration:line-through;color:var(--g1);border-style:dashed}
-.rels .a{width:22px;height:1px;background:var(--ln2);flex-shrink:0}
-.chain{display:flex;overflow-x:auto;align-items:stretch;min-height:96px}
-.chain .empty{font-family:var(--mono);font-size:12px;color:var(--g1);align-self:center}
-.blk{flex:0 0 190px;border:1px solid var(--ln2);padding:10px 12px;font-family:var(--mono);font-size:10.5px;display:flex;flex-direction:column;gap:3px;color:var(--g2)}
-.blk b{color:var(--fg);font-size:12px;font-weight:500}
-.blk.bad{border-color:var(--fg);background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(255,255,255,.08) 7px 9px);color:var(--fg)}
-.lnk{flex:0 0 26px;align-self:center;height:1px;background:var(--ln2);position:relative}
-.lnk.cut{background:transparent;border-top:1px dashed var(--fg)}
-.lnk.cut::after{content:"×";position:absolute;left:8px;top:-11px;color:var(--fg)}
 
 /* ---------- SYSTEM ---------- */
 .arch{overflow-x:auto}
@@ -291,33 +355,36 @@ h1,h2,h3,p{margin:0}
 .nodeinfo p{color:var(--g3);font-size:14px;margin-top:10px}
 .nodeinfo .path{font-family:var(--mono);font-size:11.5px;color:var(--g2);margin-top:14px}
 
-/* ---------- MODEL ---------- */
-#dilo{height:560px;overflow:hidden;cursor:grab}
+/* ---------- MODELS ---------- */
+#dilo{min-height:560px;overflow:hidden;cursor:grab}
 #dilo canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .spec{display:grid;grid-template-columns:1fr auto;font-size:14.5px}
-.spec>*{padding:12px 0;border-bottom:1px solid var(--ln)}
+.spec>*{padding:11px 0;border-bottom:1px solid var(--ln)}
 .spec>*:nth-child(odd){color:var(--g2)}
 .spec>*:nth-child(even){text-align:right}
 .layers{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:3px;height:74px;align-items:end}
 .layers i{display:block;height:58%;background:var(--s3);border-top:1px solid var(--g2)}
 .layers i.gl{height:100%;background:var(--fg);border-color:var(--fg)}
 .layers-l{display:flex;justify-content:space-between;gap:10px;margin-top:10px}
+.mid{font-size:clamp(48px,4.6vw,76px);margin:10px 0 14px}
 .nums{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:1px;background:var(--ln);border-top:1px solid var(--ln)}
 .nums>div{background:var(--bg);padding:20px 22px;display:flex;flex-direction:column;gap:8px;min-width:0}
-.nums b{font-weight:600;letter-spacing:-.03em;font-size:clamp(28px,2.6vw,40px);line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nums b{font-weight:600;letter-spacing:-.03em;font-size:clamp(26px,2.4vw,38px);line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media (max-width:1100px){.nums{grid-template-columns:repeat(4,1fr)}}
 
 /* ---------- LIGHT SHEET ---------- */
 .sheet.light{--bg:#e7e7e2;--s1:#dcdcd7;--s2:#d3d3cd;--s3:#c4c4be;--ln:#c6c6c0;--ln2:#a9a9a3;--g1:#8a8a85;--g2:#5f5f5b;--g3:#2e2e2c;--fg:#0a0a0a;color-scheme:light}
-.bars .b{margin-bottom:16px}
-.bars .bl{display:flex;justify-content:space-between;font-size:13.5px;margin-bottom:6px;gap:10px}
-.bars .bl span:last-child{font-family:var(--mono);font-size:11.5px;color:var(--g2)}
-.stk{display:flex;height:30px;background:var(--s2)}
-.stk i{display:block;height:100%;width:0;transition:width 1.3s cubic-bezier(.2,.8,.2,1)}
-.stk .c{background:var(--fg)}
-.stk .w{background:repeating-linear-gradient(135deg,var(--fg) 0 2px,transparent 2px 6px);box-shadow:inset 0 0 0 1px var(--fg)}
-.stk .a{background:var(--s3)}
-.lgd{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--g2);margin-top:10px}
+.cmp{display:flex;flex-direction:column;gap:20px}
+.cmp .grp{display:grid;grid-template-columns:120px minmax(0,1fr);gap:14px;align-items:center}
+.cmp .lab{font-family:var(--mono);font-size:11.5px;color:var(--g2);line-height:1.4}
+.cmp .lab b{display:block;color:var(--fg);font-family:var(--disp);font-size:16px;font-weight:600;letter-spacing:-.01em}
+.cmp .two{display:flex;flex-direction:column;gap:5px}
+.cmp .bar{position:relative;height:28px;background:var(--s2)}
+.cmp .bar i{position:absolute;inset:0 auto 0 0;width:0;transition:width 1.4s cubic-bezier(.2,.8,.2,1)}
+.cmp .bar.h i{background:repeating-linear-gradient(135deg,var(--fg) 0 2px,transparent 2px 6px);box-shadow:inset 0 0 0 1px var(--fg)}
+.cmp .bar.m i{background:var(--fg)}
+.cmp .bar span{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;color:#fff;mix-blend-mode:difference}
+.lgd{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--g2);margin-top:18px}
 .lgd i{display:inline-block;width:14px;height:10px;margin-right:6px;vertical-align:-1px}
 #plot{width:100%;height:auto;display:block;cursor:crosshair}
 #plot text{font-family:var(--mono);font-size:10.5px;fill:var(--g2)}
@@ -337,100 +404,129 @@ h1,h2,h3,p{margin:0}
 .swr .pass .cap{color:var(--bg)}
 input[type=range]{width:100%;accent-color:var(--fg)}
 .tt{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
-.tt th,.tt td{padding:15px 22px;border-bottom:1px solid var(--ln);text-align:right}
+.tt th,.tt td{padding:13px 22px;border-bottom:1px solid var(--ln);text-align:right}
 .tt th:first-child,.tt td:first-child{text-align:left}
 .tt th{font-weight:500;font-size:12.5px;color:var(--g2)}
 .tt tr.h td{font-weight:600}
+.tt td small{font-family:var(--mono);font-size:11px;color:var(--g2);margin-left:6px}
+.tt td.w{font-weight:600}
+.decide{font-size:clamp(19px,1.7vw,25px);font-weight:600;letter-spacing:-.02em;line-height:1.22}
 .huge{font-size:clamp(90px,11vw,190px)}
-
-/* ---------- OPEN ITEMS ---------- */
-.oi{width:100%;border-collapse:collapse}
-.oi td{padding:20px 22px;border-bottom:1px solid var(--ln);vertical-align:middle;font-size:14px}
-.oi td:first-child{width:60px}
-.oi td.it{font-weight:700;font-size:17px;width:28%;white-space:nowrap}
-.oi td.nx{font-size:13.5px;color:var(--g2);white-space:nowrap}
-.oi tr:hover{background:var(--s2)}
-.sev{display:inline-flex;gap:2px}.sev i{width:7px;height:12px;border:1px solid var(--fg)}.sev i.f{background:var(--fg)}
 
 /* ---------- END ---------- */
 .endmark{font-size:clamp(70px,17.5vw,330px);display:block;white-space:nowrap}
 .foot{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--g1);padding:6px 8px 12px}
+
+/* ---------- PRESENTER ---------- */
+.hud{position:fixed;left:50%;bottom:16px;z-index:60;display:flex;align-items:stretch;background:#efefec;color:#0a0a0a;border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.6);font-size:13px;transform:translate(-50%,calc(100% + 40px));visibility:hidden;transition:transform .4s cubic-bezier(.2,.8,.2,1),visibility 0s .4s;max-width:calc(100vw - 20px);overflow:hidden;color-scheme:light}
+body.pm .hud{transform:translate(-50%,0);visibility:visible;transition:transform .4s cubic-bezier(.2,.8,.2,1)}
+.hud>*{display:flex;align-items:center;gap:8px;padding:10px 14px;border-right:1px solid #c6c6c0;white-space:nowrap;min-width:0}
+.hud>*:last-child{border-right:0}
+.hud button{transition:background .15s}
+.hud button:hover{background:#d3d3cd}
+.hud button[aria-pressed="true"]{background:#0a0a0a;color:#efefec}
+.hud .arrow{font-size:17px;padding:10px 16px}
+.hud .hs{flex-direction:column;align-items:flex-start;gap:0;line-height:1.25}
+.hud .hs b{font-family:var(--mono);font-weight:500;font-size:11px;color:#5f5f5b}
+.hud .hs span{font-weight:600;font-size:14px;max-width:32ch;overflow:hidden;text-overflow:ellipsis}
+.hud .rq i{border-color:#a9a9a3;color:#5f5f5b}
+.hud .rq i.on{background:#0a0a0a;color:#efefec;border-color:#0a0a0a}
+.hud .ht{font-family:var(--mono);font-variant-numeric:tabular-nums;flex-direction:column;align-items:flex-end;gap:0;line-height:1.25}
+.hud .ht b{font-weight:500;font-size:14px}
+.hud .ht small{font-size:10.5px;color:#5f5f5b}
+.hud .ht.late b{text-decoration:underline wavy;text-underline-offset:3px}
+@media (max-width:1000px){.hud .rq,.hud #hPop,.hud #hTrack{display:none}}
+@media (max-width:640px){.hud .ht,.hud #hNotes{display:none}.hud .hs span{max-width:16ch}}
+.notes{position:fixed;right:16px;top:16px;bottom:96px;width:min(390px,calc(100vw - 32px));z-index:59;background:var(--s1);border:1px solid var(--ln2);border-radius:14px;padding:20px 22px;overflow:auto;transform:translateX(calc(100% + 40px));visibility:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),visibility 0s .35s;display:flex;flex-direction:column;gap:12px;box-shadow:0 14px 44px rgba(0,0,0,.5)}
+body.pm.nt .notes{transform:none;visibility:visible;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.notes h3{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.notes .say{font-size:15.5px;line-height:1.55}
+.notes .do{font-size:13px;color:var(--g3);border-left:2px solid var(--fg);padding-left:10px}
+.notes .nx{font-size:13px;color:var(--g2);margin-top:auto;border-top:1px solid var(--ln);padding-top:10px}
+.toast{position:fixed;left:50%;top:16px;transform:translate(-50%,-160%);visibility:hidden;background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:13px;z-index:70;transition:transform .3s,visibility 0s .3s;max-width:calc(100vw - 32px)}
+.toast.on{transform:translate(-50%,0);visibility:visible;transition:transform .3s}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
-
-
+</head>
+<body>
 
 <main class="page">
 
 <!-- 00 COVER -->
 <section class="sheet" id="s0">
-  <div class="tb"><span class="no">00</span><span class="ttl">PatchWork · Hotfix the Internet</span><span class="m hide-s">GDG on Campus CRCE · Problem 3</span><span class="m hide-s">Scale 1:1</span><span class="m">Rev r3</span></div>
+  <div class="tb"><span class="no">00</span><span class="ttl">PatchWork · Hotfix the Internet</span></div>
   <div class="g">
     <div class="c s8 m12 p0" id="globe">
       <canvas id="gcv" aria-label="Rotating ASCII-rendered globe; bright squares are live patches"></canvas>
       <svg id="gsvg" aria-hidden="true"></svg>
       <div id="glabels" aria-hidden="true"></div>
-      <div class="gcap tl cap">Fig. 0 · the web, patched in place</div>
       <div class="gcap tr cap">Cursor <b id="gll">—</b></div>
-      <div class="gcap bl cap">Drag to rotate</div>
       <div class="gcap br cap">█ live patch</div>
     </div>
     <div class="c s4 m12" style="display:flex;align-items:flex-end">
       <h1 class="big wordmark"><span>Patch</span><span>Work</span></h1>
     </div>
     <div class="c s4 m6" style="display:flex;flex-direction:column;justify-content:space-between;gap:26px">
-      <p style="font-size:clamp(19px,1.6vw,24px);font-weight:500;line-height:1.25;max-width:22ch">Patch live websites without rebuilding them.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="k solid" href="#s5">Try the console</a><a class="k" href="https://github.com/JohnThrisokaran000/Shotgun_college_round" target="_blank" rel="noopener">Source ↗</a></div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <p style="font-size:clamp(19px,1.6vw,24px);font-weight:500;line-height:1.25;max-width:22ch">Patch live websites without rebuilding them.</p>
+        <p class="lead" style="font-size:14.5px">Every fix is previewed, checked in a real browser, reviewed, released as a version, and rolled back by itself if visitors hit errors.</p>
+      </div>
+      <div class="cta">
+        <button class="k solid" id="presentBtn">▶ Present <span class="kbd">P</span></button>
+        <a class="k" href="#s3">Try the console</a>
+        <a class="k" href="https://github.com/JohnThrisokaran000/Shotgun_college_round" target="_blank" rel="noopener">Source ↗</a>
+      </div>
     </div>
     <div class="c s4 m6">
       <div class="readout">
         <span>Language</span><span>Rust</span>
         <span>In-page runtime</span><span>7.5 KB</span>
-        <span>Rust tests</span><span>137 / 137</span>
-        <span>Python tests</span><span>48 / 48</span>
-        <span>Model</span><span>126.7M · scratch</span>
+        <span>Rust tests</span><span>192 pass</span>
+        <span>Python tests</span><span>51 pass</span>
+        <span>Models, from scratch</span><span>126.7M · 1.6M</span>
         <span>Training GPUs</span><span>26 × T4</span>
-        <span>Local time</span><span id="clock">--:--:--</span>
       </div>
     </div>
   </div>
   <div class="cmds">
-    <a href="#s3"><b>pw edit</b><span class="cap">click → patch</span></a>
-    <a href="#s4"><b>pw check</b><span class="cap">re-anchor</span></a>
-    <a href="#s2"><b>pw merge</b><span class="cap">conflicts</span></a>
-    <a href="#s5"><b>pw release</b><span class="cap">immutable</span></a>
+    <a href="#s3" data-show="1"><b>pw edit</b><span class="cap">click → patch</span></a>
+    <a href="#s5" data-show="track"><b>pw check</b><span class="cap">re-anchor</span></a>
+    <a href="#s3" data-show="6"><b>pw merge</b><span class="cap">conflicts</span></a>
+    <a href="#s3" data-show="3"><b>pw release</b><span class="cap">channels</span></a>
     <a href="#s6"><b>pw proxy</b><span class="cap">inject</span></a>
-    <a href="#s5"><b>pw verify</b><span class="cap">chromium</span></a>
-    <a href="#s5"><b>pw rollback</b><span class="cap">one step back</span></a>
-    <a href="#s5"><b>pw audit-verify</b><span class="cap">hash chain</span></a>
+    <a href="#s3" data-show="4"><b>pw verify</b><span class="cap">chromium</span></a>
+    <a href="#s3" data-show="7"><b>pw rollback</b><span class="cap">automatic</span></a>
+    <a href="#s3" data-show="8"><b>pw audit-verify</b><span class="cap">hash chain</span></a>
   </div>
 </section>
 
 <!-- 01 PROBLEM -->
 <section class="sheet" id="s1">
-  <div class="tb"><span class="no">01</span><span class="ttl">The problem</span><span class="m hide-s">3 failure modes</span><span class="m hide-s">—</span><span class="m">Rev r3</span></div>
+  <div class="tb"><span class="no">01</span><span class="ttl">The problem</span></div>
   <div class="g">
     <div class="c s12"><h2 class="big statement">A typo should not<br>need a redeploy.</h2></div>
-    <div class="c s4 m12 lane">
-      <div class="cell-head"><h3 class="big">Rebuild</h3><span class="cap">today vs patchwork</span></div>
-      <svg viewBox="0 0 360 170" aria-label="A fix moving slowly through commit, build, test, review and deploy, while a patch goes straight through the proxy">
-        <text x="0" y="12">Today</text>
-        <path class="pth" d="M28 46 H340"/>
-        <rect class="bx" x="0" y="30" width="56" height="32"/><text x="8" y="50">commit</text>
-        <rect class="bx" x="72" y="30" width="56" height="32"/><text x="84" y="50">build</text>
-        <rect class="bx" x="144" y="30" width="56" height="32"/><text x="160" y="50">test</text>
-        <rect class="bx" x="216" y="30" width="56" height="32"/><text x="225" y="50">review</text>
-        <rect class="bx" x="288" y="30" width="56" height="32"/><text x="297" y="50">deploy</text>
-        <rect width="8" height="8" fill="#efefec"><animateMotion dur="9s" repeatCount="indefinite" path="M24 42 H330"/></rect>
-        <text x="0" y="104">With PatchWork</text>
-        <path class="pth" d="M28 138 H340"/>
-        <rect class="bx w" x="0" y="122" width="56" height="32"/><text class="tw" x="12" y="142">patch</text>
-        <rect class="bx w" x="288" y="122" width="56" height="32"/><text class="tw" x="300" y="142">proxy</text>
-        <rect width="8" height="8" fill="#efefec"><animateMotion dur="1.5s" repeatCount="indefinite" path="M60 134 H280"/></rect>
+    <div class="c s4 m12">
+      <div class="cell-head"><h3 class="big">Rebuild</h3><span class="cap">today vs PatchWork</span></div>
+      <p class="lede">A one-word fix waits for the whole pipeline.</p>
+      <svg class="lanes" id="lanes" viewBox="0 0 360 176" aria-label="Today a fix passes through commit, build, test, review and deploy. With PatchWork a patch goes straight to the proxy.">
+        <text class="lt" x="0" y="12">Today</text>
+        <g data-l="0" data-x="0" data-w="56"><rect x="0.5" y="24.5" width="56" height="32"/><text x="28.5" y="44.5" text-anchor="middle">commit</text></g>
+        <g data-l="0" data-x="72" data-w="56"><rect x="72.5" y="24.5" width="56" height="32"/><text x="100.5" y="44.5" text-anchor="middle">build</text></g>
+        <g data-l="0" data-x="144" data-w="56"><rect x="144.5" y="24.5" width="56" height="32"/><text x="172.5" y="44.5" text-anchor="middle">test</text></g>
+        <g data-l="0" data-x="216" data-w="56"><rect x="216.5" y="24.5" width="56" height="32"/><text x="244.5" y="44.5" text-anchor="middle">review</text></g>
+        <g data-l="0" data-x="288" data-w="56"><rect x="288.5" y="24.5" width="56" height="32"/><text x="316.5" y="44.5" text-anchor="middle">deploy</text></g>
+        <line class="rail" x1="0" x2="344" y1="70.5" y2="70.5"/>
+        <rect class="tok" id="tok0" x="0" y="67" width="7" height="7"/>
+        <text class="lt" x="0" y="110">With PatchWork</text>
+        <g class="w" data-l="1" data-x="0" data-w="56"><rect x="0.5" y="122.5" width="56" height="32"/><text x="28.5" y="142.5" text-anchor="middle">patch</text></g>
+        <g class="w" data-l="1" data-x="288" data-w="56"><rect x="288.5" y="122.5" width="56" height="32"/><text x="316.5" y="142.5" text-anchor="middle">proxy</text></g>
+        <line class="rail" x1="0" x2="344" y1="168.5" y2="168.5"/>
+        <rect class="tok" id="tok1" x="0" y="165" width="7" height="7"/>
       </svg>
     </div>
     <div class="c s4 m12 drift">
       <div class="cell-head"><h3 class="big">Drift</h3><span class="cap">selector vs redesign</span></div>
+      <p class="lede" style="font-family:var(--disp)">A fix pinned to a CSS selector breaks when a redesign renames a class.</p>
       <div class="sel"><span>button.btn-primary</span><span>matches <b id="dm">1</b></span></div>
       <div class="dom">
         <span>&lt;form class="cart"&gt;</span>
@@ -441,38 +537,98 @@ input[type=range]{width:100%;accent-color:var(--fg)}
       <div class="numline"><span>class names tried</span><b id="dsv">1</b></div>
     </div>
     <div class="c s4 m12">
-      <div class="cell-head"><h3 class="big">Blind</h3><span class="cap">96 visitors</span></div>
-      <div class="blind" id="blind"></div>
-      <div class="numline"><span>errors the team saw</span><b>0</b></div>
+      <div class="cell-head"><h3 class="big">Blind</h3><span class="cap">visitors' browsers</span></div>
+      <p class="lede">When a fix breaks in visitors' browsers, nobody on the team hears about it.</p>
+      <div class="blind" id="blind" aria-hidden="true"></div>
     </div>
   </div>
 </section>
 
 <!-- 02 BRIEF -->
 <section class="sheet" id="s2">
-  <div class="tb"><span class="no">02</span><span class="ttl">Brief compliance</span><span class="m hide-s">docs/DESIGN.md §1</span><span class="m hide-s">7 requirements</span><span class="m">Rev r3</span></div>
+  <div class="tb"><span class="no">02</span><span class="ttl">The brief, feature by feature</span><span class="rq" data-rq="1 2 3 4 5 6 7"></span></div>
+  <div class="mxwrap">
+    <table class="mx" id="brief">
+      <thead><tr><th>#</th><th>Feature in the problem statement</th><th>Where</th><th>Command</th><th>Evidence</th><th></th></tr></thead>
+      <tbody>
+        <tr data-r="1"><td>R1</td><td class="req">Visual patching</td><td class="wh">runtime/editor.js</td><td><code>pw edit URL</code></td><td class="ev"><i class="dot h"></i>save path tested in headless Chromium</td><td class="dm"><button class="show" data-show="1">Show</button></td></tr>
+        <tr data-r="2"><td>R2</td><td class="req">Smart element tracking</td><td class="wh">pw-core/relocate.rs</td><td><code>pw check</code></td><td class="ev"><i class="dot f"></i>held-out benchmark, rules fixed in advance</td><td class="dm"><button class="show" data-show="track">Show</button></td></tr>
+        <tr data-r="3"><td>R3</td><td class="req">Collaborative editing</td><td class="wh">pw-core/review.rs · conflict.rs</td><td><code>pw review</code> · <code>pw merge</code></td><td class="ev"><i class="dot f"></i>gate and collaboration tests · live run</td><td class="dm"><button class="show" data-show="6">Show</button></td></tr>
+        <tr data-r="4"><td>R4</td><td class="req">Isolated preview</td><td class="wh">pw-proxy channels</td><td><code>--channel preview/x</code></td><td class="ev"><i class="dot f"></i>proxy end-to-end tests · live run</td><td class="dm"><button class="show" data-show="3">Show</button></td></tr>
+        <tr data-r="5"><td>R5</td><td class="req">Automated verification</td><td class="wh">pw-cli/browser.rs</td><td><code>pw verify</code></td><td class="ev"><i class="dot f"></i>Chromium 153: assertions + pixel check</td><td class="dm"><button class="show" data-show="4">Show</button></td></tr>
+        <tr data-r="6"><td>R6</td><td class="req">Versioned deployment and rollback</td><td class="wh">pw-core/release.rs · pw-proxy</td><td><code>pw rollback</code></td><td class="ev"><i class="dot f"></i>auto-rollback from real browser errors</td><td class="dm"><button class="show" data-show="7">Show</button></td></tr>
+        <tr data-r="7"><td>R7</td><td class="req">Audit trail</td><td class="wh">pw-core/audit.rs</td><td><code>pw audit-verify</code></td><td class="ev"><i class="dot f"></i>tamper and truncation tests</td><td class="dm"><button class="show" data-show="8">Show</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="mxl"><span><i class="dot f"></i>tested, and run end to end on the real binary</span><span><i class="dot h"></i>tested headless; a headed session is not yet tested</span><span class="sp"></span><span>Show runs the feature on this page</span></div>
+</section>
+
+<!-- 03 CONSOLE -->
+<section class="sheet" id="s3">
+  <div class="tb"><span class="no">03</span><span class="ttl">Console · one fix, end to end</span><span class="rq" data-rq="1 3 4 5 6 7"></span></div>
+  <div class="chap" id="chap" role="group" aria-label="Demo chapters">
+    <button data-ch="1"><i>1</i><b>Edit</b><span>R1 visual</span></button>
+    <button data-ch="2"><i>2</i><b>Check</b><span>R2 tracking</span></button>
+    <button data-ch="3"><i>3</i><b>Preview</b><span>R4 isolated</span></button>
+    <button data-ch="4"><i>4</i><b>Verify</b><span>R5 chromium</span></button>
+    <button data-ch="5"><i>5</i><b>Review</b><span>R3 approve</span></button>
+    <button data-ch="6"><i>6</i><b>Merge</b><span>R3 conflicts</span></button>
+    <button data-ch="7"><i>7</i><b>Rollback</b><span>R6 automatic</span></button>
+    <button data-ch="8"><i>8</i><b>Audit</b><span>R7 chain</span></button>
+    <button class="ctl solid" id="runAll">▶ Run all</button>
+    <button class="ctl" id="cReset">Reset</button>
+  </div>
   <div class="g">
-    <div class="c s3 m12"><div class="score7"><span class="cap">Built</span><span class="big">7/7</span><div class="legend"><span><i class="dot f"></i>verified by tests or a real run</span><span><i class="dot h"></i>built, not exercised end to end</span></div></div></div>
-    <div class="c s9 m12 p0 mxwrap">
-      <table class="mx">
-        <thead><tr><th>#</th><th>Requirement</th><th>Where</th><th>Command</th><th>Check</th></tr></thead>
-        <tbody>
-          <tr><td>01</td><td class="req">Visual patching</td><td class="wh">runtime/editor.js</td><td><code>pw edit URL</code></td><td><i class="dot h"></i>overlay + save built</td></tr>
-          <tr><td>02</td><td class="req">Smart element tracking</td><td class="wh">pw-core/relocate.rs</td><td><code>pw check</code></td><td><i class="dot f"></i>1,200-case benchmark</td></tr>
-          <tr><td>03</td><td class="req">Collaborative editing</td><td class="wh">pw-core/conflict.rs</td><td><code>pw merge</code></td><td><i class="dot f"></i>5 conflict classes</td></tr>
-          <tr><td>04</td><td class="req">Isolated preview</td><td class="wh">pw-proxy channels</td><td><code>/__pw/channel</code></td><td><i class="dot f"></i>proxy e2e</td></tr>
-          <tr><td>05</td><td class="req">Automated verification</td><td class="wh">pw-cli/browser.rs</td><td><code>pw verify</code></td><td><i class="dot f"></i>Chromium 153 run</td></tr>
-          <tr><td>06</td><td class="req">Versioned deploy + rollback</td><td class="wh">pw-core/release.rs</td><td><code>pw rollback</code></td><td><i class="dot f"></i>policy trip e2e</td></tr>
-          <tr><td>07</td><td class="req">Audit trail</td><td class="wh">pw-core/audit.rs</td><td><code>pw audit-verify</code></td><td><i class="dot f"></i>tamper + truncation</td></tr>
-        </tbody>
-      </table>
+    <div class="c s6 m12 p0">
+      <div class="term">
+        <div class="term-top"><span class="on">tty1</span><span>~/shop</span><span class="sp"></span><span>simulated · output from the real CLI</span></div>
+        <div class="term-body" id="tb">
+          <div id="tout"></div>
+          <div class="inrow"><span class="pr">~/shop $</span><input id="tin" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Terminal input"></div>
+        </div>
+        <div class="sugg" id="sugg"></div>
+      </div>
     </div>
+    <div class="c s6 m12 p0">
+      <div class="bpane">
+        <div class="br-top"><div class="chs" id="chs"></div><span class="br-url" id="burl">http://127.0.0.1:8080/cart</span><span class="br-rel" id="brel">no release</span></div>
+        <div class="shop" id="shop">
+          <div class="shop-nav"><b>Northwind</b><span>cart · 3 items</span></div>
+          <div class="row"><i class="th"></i><div><b>Stoneware mug, ash</b><small>2 × $18.00</small></div><b>$36.00</b></div>
+          <div class="row"><i class="th"></i><div><b>Linen tea towel</b><small>1 × $12.00</small></div><b>$12.00</b></div>
+          <div class="sum" id="ssum"><span>Subtotal</span><b>$48.00</b></div>
+          <div class="ship">Add $2.00 more for free shipping</div>
+          <div class="acts"><button class="sb" id="scont">Continue shopping</button><button class="sb buy" id="sbuy"><span id="sbuyT">Byu now</span></button></div>
+          <div class="ov" id="ov"><span id="ovT"></span></div>
+          <div class="mask" id="mask"><span>excluded from the pixel check</span></div>
+          <div class="scan" id="scan"></div>
+          <div class="checks" id="checks"></div>
+          <div class="edp" id="edp" aria-hidden="true"></div>
+          <div class="btoast" id="btoast"></div>
+          <svg id="cur" viewBox="0 0 18 18"><path d="M2 1 L2 15 L6 11 L9 17 L11 16 L8 10 L14 10 Z" fill="#121212" stroke="#ededea" stroke-width="1"/></svg>
+        </div>
+        <div class="devt" id="devt"><div>devtools · console</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="stat" id="cstat">
+    <div><span class="cap">Patches</span><b id="kPat">0</b></div>
+    <div><span class="cap">preview/fix</span><b class="id" id="kPrev">—</b></div>
+    <div><span class="cap">production</span><b class="id" id="kRel">—</b></div>
+    <div><span class="cap">Proxy</span><b id="kProx">off</b></div>
+    <div><span class="cap">Error beacons / 60 s</span><b id="kErr">0/5</b><div class="pips" id="pE"><i></i><i></i><i></i><i></i><i></i></div></div>
+    <div><span class="cap">Sessions with errors</span><b id="kSes">0/3</b><div class="pips" id="pS"><i></i><i></i><i></i></div></div>
+  </div>
+  <div class="g" style="border-top:1px solid var(--ln)" id="cbottom">
+    <div class="c s4 m12"><div class="cap" style="margin-bottom:12px">Releases · <b>immutable</b>; a channel is a pointer</div><div class="rels" id="rels"></div></div>
+    <div class="c s8 m12"><div class="cap" style="margin-bottom:12px">audit/events.jsonl · sha-256 chain · <b id="chainState">empty</b></div><div class="chain" id="chain"><span class="empty">nothing recorded yet</span></div></div>
   </div>
 </section>
 
-<!-- 03 PATCH -->
-<section class="sheet" id="s3">
-  <div class="tb"><span class="no">03</span><span class="ttl">Anatomy of a patch</span><span class="m hide-s">patches/cart/fix-buy-label.yaml</span><span class="m hide-s">pw-core/dsl.rs</span><span class="m">Rev r3</span></div>
+<!-- 04 PATCH -->
+<section class="sheet" id="s4">
+  <div class="tb"><span class="no">04</span><span class="ttl">Anatomy of a patch</span><span class="rq" data-rq="1"></span></div>
   <div class="g">
     <div class="c s7 m12 p0" style="background:var(--s1)"><pre class="yaml" id="yaml"></pre></div>
     <div class="c s5 m12 p0" style="display:flex;flex-direction:column">
@@ -480,7 +636,7 @@ input[type=range]{width:100%;accent-color:var(--fg)}
         <div class="part" data-p="loc" tabindex="0"><span class="ix">A</span><h3>Locators</h3><span class="cap">4 kinds</span></div>
         <div class="part" data-p="fp" tabindex="0"><span class="ix">B</span><h3>Fingerprint</h3><span class="cap">10 signals</span></div>
         <div class="part" data-p="ops" tabindex="0"><span class="ix">C</span><h3>Operations</h3><span class="cap">18 ops</span></div>
-        <div class="part" data-p="as" tabindex="0"><span class="ix">D</span><h3>Assertions</h3><span class="cap">in Chromium</span></div>
+        <div class="part" data-p="as" tabindex="0"><span class="ix">D</span><h3>Assertions</h3><span class="cap">6 kinds · in Chromium</span></div>
       </div>
       <div style="flex:1"></div>
       <div class="opgrid" id="opgrid"></div>
@@ -498,16 +654,24 @@ input[type=range]{width:100%;accent-color:var(--fg)}
   </div>
 </section>
 
-<!-- 04 TRACKING -->
-<section class="sheet" id="s4">
-  <div class="tb"><span class="no">04</span><span class="ttl">Element tracking · exploded view</span><span class="m hide-s">pw-core/relocate.rs</span><span class="m hide-s">illustrative scores</span><span class="m">Rev r3</span></div>
+<!-- 05 TRACKING -->
+<section class="sheet" id="s5">
+  <div class="tb"><span class="no">05</span><span class="ttl">Element tracking · exploded view</span><span class="rq" data-rq="2"></span></div>
+  <div class="tg-row" id="presets">
+    <span class="lbl">Scenarios</span>
+    <button class="tg ps" data-p="redesign" aria-pressed="false">Redesign</button>
+    <button class="tg ps" data-p="lookalike" aria-pressed="false">Look-alike</button>
+    <button class="tg ps" data-p="compound" aria-pressed="false">Compound drift</button>
+    <button class="tg ps" data-p="deleted" aria-pressed="false">Deleted</button>
+  </div>
   <div class="tg-row" id="toggles">
+    <span class="lbl">Changes</span>
     <button class="tg" data-m="renameClass" aria-pressed="false">Rename class</button>
     <button class="tg" data-m="dropId" aria-pressed="false">Drop ids</button>
     <button class="tg" data-m="wrap" aria-pressed="false">Wrap</button>
     <button class="tg" data-m="move" aria-pressed="false">Move</button>
     <button class="tg" data-m="retext" aria-pressed="false">Retext</button>
-    <button class="tg" data-m="decoy" aria-pressed="false">Look-alike</button>
+    <button class="tg" data-m="decoy" aria-pressed="false">Add look-alike</button>
     <button class="tg" data-m="del" aria-pressed="false">Delete</button>
     <button class="tg" id="trReset" aria-pressed="false">Reset</button>
   </div>
@@ -536,7 +700,7 @@ input[type=range]{width:100%;accent-color:var(--fg)}
           </div>
         </div>
       </div>
-      <div class="xp-hud"><span class="cap">Fig. 4 · page → regions → elements → fingerprint</span><span class="cap">pointer tilts</span></div>
+      <div class="xp-hud"><span class="cap">page → regions → elements → fingerprint</span><span class="cap">illustrative scores · real weights and thresholds</span></div>
     </div>
     <div class="c s5 m12">
       <div class="cap" style="margin-bottom:6px">1 · Fast path <b id="fpState"></b></div>
@@ -552,69 +716,23 @@ input[type=range]{width:100%;accent-color:var(--fg)}
   <div class="wbars" id="wbars"></div>
 </section>
 
-<!-- 05 CONSOLE -->
-<section class="sheet" id="s5">
-  <div class="tb"><span class="no">05</span><span class="ttl">Console · type, watch the site change</span><span class="m hide-s">simulated pw · real sha-256</span><span class="m hide-s">type help</span><span class="m">Rev r3</span></div>
-  <div class="g">
-    <div class="c s6 m12 p0">
-      <div class="term">
-        <div class="term-top"><span class="on">tty1</span><span>~/shop</span><span class="sp"></span><button id="auto">▶ Autoplay</button></div>
-        <div class="term-body" id="tb">
-          <div id="tout"></div>
-          <div class="inrow"><span class="pr">~/shop $</span><input id="tin" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Terminal input"></div>
-        </div>
-        <div class="sugg" id="sugg"></div>
-      </div>
-    </div>
-    <div class="c s6 m12 p0">
-      <div class="br">
-        <div class="br-top"><span class="br-ch off" id="bch">direct</span><span class="br-url" id="burl">http://127.0.0.1:8080/cart</span><span style="color:var(--g2)" id="brel">no release</span></div>
-        <div class="shop" id="shop">
-          <div class="shop-nav"><b>Northwind</b><span>cart · 3 items</span></div>
-          <div class="banner" id="sban" hidden><span>Free shipping over $50</span><span>→</span></div>
-          <div class="row"><i class="th"></i><div><b>Stoneware mug, ash</b><small>2 × $18.00</small></div><b>$36.00</b></div>
-          <div class="row"><i class="th"></i><div><b>Linen tea towel</b><small>1 × $12.00</small></div><b>$12.00</b></div>
-          <div class="sum"><span>Subtotal</span><b>$48.00</b></div>
-          <div class="acts"><button class="sb" id="scont">Continue shopping</button><button class="sb buy" id="sbuy"><span id="sbuyT">Byu now</span></button></div>
-          <div class="ov" id="ov"><span id="ovT">button.btn-primary</span></div>
-          <div class="checks" id="checks"></div>
-          <svg id="cur" viewBox="0 0 18 18"><path d="M2 1 L2 15 L6 11 L9 17 L11 16 L8 10 L14 10 Z" fill="#121212" stroke="#ededea" stroke-width="1"/></svg>
-        </div>
-        <div class="devt" id="devt"><div>devtools · console</div></div>
-      </div>
-    </div>
-  </div>
-  <div class="stat">
-    <div><span class="cap">Project</span><b id="kProj">none</b></div>
-    <div><span class="cap">Patches</span><b id="kPat">0</b></div>
-    <div><span class="cap">Proxy</span><b id="kProx">off</b></div>
-    <div><span class="cap">Production</span><b id="kRel">—</b></div>
-    <div><span class="cap">Errors / 60s</span><b id="kErr">0/5</b><div class="pips" id="pE"><i></i><i></i><i></i><i></i><i></i></div></div>
-    <div><span class="cap">Sessions</span><b id="kSes">0/3</b><div class="pips" id="pS"><i></i><i></i><i></i></div></div>
-  </div>
-  <div class="g" style="border-top:1px solid var(--ln)">
-    <div class="c s4 m12"><div class="cap" style="margin-bottom:12px">Releases · production pointer</div><div class="rels" id="rels"></div></div>
-    <div class="c s8 m12"><div class="cap" style="margin-bottom:12px">audit.jsonl · sha-256 chain · <b id="chainState">empty</b></div><div class="chain" id="chain"><span class="empty">run pw init</span></div></div>
-  </div>
-</section>
-
 <!-- 06 SYSTEM -->
 <section class="sheet" id="s6">
-  <div class="tb"><span class="no">06</span><span class="ttl">System</span><span class="m hide-s">crates/*</span><span class="m hide-s">hover a block</span><span class="m">Rev r3</span></div>
+  <div class="tb"><span class="no">06</span><span class="ttl">System</span><span class="rq" data-rq="4 6"></span></div>
   <div class="g">
     <div class="c s9 m12 arch">
       <svg viewBox="0 0 980 520" id="archsvg" role="img" aria-label="Architecture: developer tools, pw-core and release manifests on the developer machine; the pw proxy between upstream site and visitor browsers; beacons drive auto-rollback.">
         <rect class="zone" x="10" y="20" width="330" height="480"/><text class="zl" x="22" y="40">Developer machine</text>
         <rect class="zone" x="360" y="20" width="260" height="480"/><text class="zl" x="372" y="40">Request path</text>
         <rect class="zone" x="640" y="20" width="330" height="480"/><text class="zl" x="652" y="40">Internet</text>
-        <g class="nd" data-n="edit"><rect x="30" y="64" width="290" height="64"/><text x="46" y="92">pw edit · pw snapshot</text><text class="t2" x="46" y="112">headed Chromium overlay</text></g>
-        <g class="nd" data-n="pw"><rect x="30" y="168" width="290" height="64"/><text x="46" y="196">Playwright</text><text class="t2" x="46" y="216">playwright-rs driver</text></g>
-        <g class="nd" data-n="core"><rect x="30" y="272" width="290" height="64"/><text x="46" y="300">pw-core</text><text class="t2" x="46" y="320">relocate · dsl · conflict · release</text></g>
-        <g class="nd" data-n="rel"><rect x="30" y="396" width="290" height="64"/><text x="46" y="424">release manifests</text><text class="t2" x="46" y="444">immutable · content-addressed</text></g>
-        <g class="nd" data-n="proxy"><rect x="380" y="150" width="220" height="110"/><text x="396" y="180">pw proxy</text><text class="t2" x="396" y="202">/__pw/runtime.js</text><text class="t2" x="396" y="220">/__pw/manifest</text><text class="t2" x="396" y="238">/__pw/beacon</text></g>
-        <g class="nd" data-n="win"><rect x="380" y="330" width="220" height="90"/><text x="396" y="360">beacon window</text><text class="t2" x="396" y="382">≥5 err · ≥3 sess · 60 s</text><text class="t2" x="396" y="400">→ rollback + audit</text></g>
-        <g class="nd" data-n="up"><rect x="660" y="64" width="290" height="64"/><text x="676" y="92">upstream site</text><text class="t2" x="676" y="112">never rebuilt</text></g>
-        <g class="nd" data-n="vis"><rect x="660" y="230" width="290" height="80"/><text x="676" y="260">visitor browser</text><text class="t2" x="676" y="282">runtime.js · idempotent</text></g>
+        <g class="nd" data-n="edit" tabindex="0"><rect x="30" y="64" width="290" height="64"/><text x="46" y="92">pw edit · pw snapshot</text><text class="t2" x="46" y="112">headed Chromium overlay</text></g>
+        <g class="nd" data-n="pw" tabindex="0"><rect x="30" y="168" width="290" height="64"/><text x="46" y="196">Playwright</text><text class="t2" x="46" y="216">playwright-rs driver</text></g>
+        <g class="nd" data-n="core" tabindex="0"><rect x="30" y="272" width="290" height="64"/><text x="46" y="300">pw-core</text><text class="t2" x="46" y="320">relocate · dsl · conflict · release</text></g>
+        <g class="nd" data-n="rel" tabindex="0"><rect x="30" y="396" width="290" height="64"/><text x="46" y="424">release manifests</text><text class="t2" x="46" y="444">immutable · content-addressed</text></g>
+        <g class="nd" data-n="proxy" tabindex="0"><rect x="380" y="150" width="220" height="110"/><text x="396" y="180">pw proxy</text><text class="t2" x="396" y="202">/__pw/runtime.js</text><text class="t2" x="396" y="220">/__pw/manifest</text><text class="t2" x="396" y="238">/__pw/beacon</text></g>
+        <g class="nd" data-n="win" tabindex="0"><rect x="380" y="330" width="220" height="90"/><text x="396" y="360">beacon window</text><text class="t2" x="396" y="382">≥5 err · ≥3 sess · 60 s</text><text class="t2" x="396" y="400">→ rollback + audit</text></g>
+        <g class="nd" data-n="up" tabindex="0"><rect x="660" y="64" width="290" height="64"/><text x="676" y="92">upstream site</text><text class="t2" x="676" y="112">never rebuilt</text></g>
+        <g class="nd" data-n="vis" tabindex="0"><rect x="660" y="230" width="290" height="80"/><text x="676" y="260">visitor browser</text><text class="t2" x="676" y="282">runtime.js · idempotent</text></g>
         <path class="e" d="M175 128V168"/><path class="e" d="M175 232V272"/><path class="e" d="M175 336V396"/>
         <path class="e" d="M320 428H350V205H380"/><path class="f s" d="M320 428H350V205H380"/>
         <path class="e" d="M660 96H630V175H600"/><path class="f" d="M660 96H630V175H600"/>
@@ -629,61 +747,82 @@ input[type=range]{width:100%;accent-color:var(--fg)}
   </div>
 </section>
 
-<!-- 07 MODEL -->
+<!-- 07 MODELS -->
 <section class="sheet" id="s7">
-  <div class="tb"><span class="no">07</span><span class="ttl">Model · DiLoCo training</span><span class="m hide-s">training/ · pw-train</span><span class="m hide-s">13 groups · 2× T4</span><span class="m">Rev r3</span></div>
+  <div class="tb"><span class="no">07</span><span class="ttl">Models · DiLoCo training</span><span class="rq" data-rq="2"></span></div>
   <div class="g">
     <div class="c s7 m12 p0" id="dilo">
       <canvas id="dcv" aria-label="3D render: 13 GPU groups around a coordinator exchanging deltas and global weights"></canvas>
-      <div class="gcap tl cap">Fig. 7 · outer round <b id="dR">0</b></div>
       <div class="gcap tr cap">deltas <b id="dD">0</b>/13 · quorum 10</div>
       <div class="gcap bl cap">■ fp16 delta 252 MB ↑ &nbsp; □ int8 global 126 MB ↓</div>
-      <div class="gcap br cap">drag to orbit</div>
     </div>
     <div class="c s5 m12" style="display:flex;flex-direction:column;gap:22px">
-      <div><span class="cap">Gemma-3-style decoder · trained from scratch</span><h3 class="big" style="font-size:clamp(70px,7vw,120px);margin-top:10px">126.7M</h3></div>
+      <div><span class="cap">Language model · trained from scratch</span><h3 class="big" style="font-size:clamp(70px,7vw,120px);margin-top:10px">126.7M</h3></div>
       <div class="spec">
-        <span>layers</span><span>24</span><span>hidden</span><span>768</span><span>heads · kv heads</span><span>3 · 1</span><span>head dim</span><span>256</span><span>ffn (GeGLU)</span><span>1,152</span><span>vocab</span><span>32,768</span><span>context</span><span>512</span>
+        <span>layers</span><span>24</span><span>hidden</span><span>768</span><span>heads · kv heads</span><span>3 · 1</span><span>head dim</span><span>256</span><span>ffn (GeGLU)</span><span>1,152</span><span>vocab</span><span>32,768</span><span>context</span><span>512</span><span>held-out perplexity</span><span>10.1</span>
       </div>
     </div>
     <div class="c s12">
       <div class="layers" id="layers"></div>
       <div class="layers-l cap"><span>layer 1</span><span>█ global · ▄ sliding window 512 · pattern 5:1</span><span>layer 24</span></div>
     </div>
+    <div class="c s6 m12"><span class="cap">Matcher · for tracking</span><h3 class="big mid">1.6M</h3><p class="lead">A cross-encoder trained from scratch on 21,959 synthetic pairs. In the combined tracker the heuristic decides first, and the matcher decides when the heuristic is unsure. Opt-in with <span class="mono">--matcher</span>; the setting it uses is recorded and bound to the weights by SHA-256.</p></div>
+    <div class="c s6 m12"><span class="cap">Inference in Rust</span><h3 class="big mid">3e-6</h3><p class="lead">pw-model runs the language model with candle on the CPU. On the same checkpoint as PyTorch, the top five tokens match and the logits differ by at most 3e-6.</p></div>
   </div>
   <div class="nums">
-    <div><span class="cap">tokens/s/group</span><b>~9,000</b></div>
-    <div><span class="cap">corpus</span><b>700M</b></div>
-    <div><span class="cap">sources</span><b>2,383</b></div>
+    <div><span class="cap">tokens trained (est.)</span><b>2.19B</b></div>
+    <div><span class="cap">code corpus</span><b>700M</b></div>
+    <div><span class="cap">licensed sources</span><b>2,383</b></div>
     <div><span class="cap">synthetic sites</span><b>450k</b></div>
-    <div><span class="cap">sync every</span><b>2,000</b></div>
-    <div><span class="cap">link</span><b>2.3 MB/s</b></div>
-    <div><span class="cap">GPU memory</span><b>11.5/16</b></div>
-    <div><span class="cap">rust vs python</span><b>3e-6</b></div>
+    <div><span class="cap">GPU memory (GB)</span><b>11.5/16</b></div>
+    <div><span class="cap">deltas merged</span><b>138</b></div>
+    <div><span class="cap">sync every (steps)</span><b>2,000</b></div>
+    <div><span class="cap">link to coordinator</span><b>2.3 MB/s</b></div>
   </div>
 </section>
 
 <!-- 08 RESULTS -->
 <section class="sheet light" id="s8">
-  <div class="tb"><span class="no">08</span><span class="ttl">Measured results</span><span class="m hide-s">pw train bench</span><span class="m hide-s">held-out synthetic sites</span><span class="m">Rev r3</span></div>
+  <div class="tb"><span class="no">08</span><span class="ttl">Measured results</span><span class="rq" data-rq="2"></span></div>
   <div class="g">
-    <div class="c s6 m12">
-      <div class="cell-head"><h3 class="big">Re-anchoring</h3><span class="cap">200 sites · 1,200 variants</span></div>
-      <div class="bars">
-        <div class="b"><div class="bl"><span>Heuristic · present (961)</span><span>84.6 · 0.73 · 14.7</span></div><div class="stk" data-v="84.6,0.73,14.7"><i class="c"></i><i class="w"></i><i class="a"></i></div></div>
-        <div class="b"><div class="bl"><span>Selector-only · present</span><span>92.9 · 3.85 · 3.2</span></div><div class="stk" data-v="92.9,3.85,3.2"><i class="c"></i><i class="w"></i><i class="a"></i></div></div>
-        <div class="b"><div class="bl"><span>Heuristic · deleted (239)</span><span>— · 17.6 · 82.4</span></div><div class="stk" data-v="0,17.6,82.4"><i class="c"></i><i class="w"></i><i class="a"></i></div></div>
-        <div class="b"><div class="bl"><span>Selector-only · deleted</span><span>— · 29.3 · 70.7</span></div><div class="stk" data-v="0,29.3,70.7"><i class="c"></i><i class="w"></i><i class="a"></i></div></div>
+    <div class="c s7 m12">
+      <div class="cell-head"><h3 class="big">Hard drift</h3><span class="cap">id dropped · text changed · moved</span></div>
+      <p class="lede">Targets relocated correctly, out of 900 per seed on held-out synthetic sites. Each seed was fresh and used once.</p>
+      <div class="cmp" id="cmp">
+        <div class="grp"><div class="lab"><b>Seed 606</b>combined tracker</div><div class="two">
+          <div class="bar h"><i data-w="34.0"></i><span>heuristic 34.0% · 0 wrong</span></div>
+          <div class="bar m"><i data-w="88.8"></i><span>learned 88.8% · 0 wrong</span></div></div></div>
+        <div class="grp"><div class="lab"><b>Seed 909</b>matcher v3</div><div class="two">
+          <div class="bar h"><i data-w="32.4"></i><span>heuristic 32.4% · 4 wrong</span></div>
+          <div class="bar m"><i data-w="94.2"></i><span>learned 94.2% · 5 wrong</span></div></div></div>
+        <div class="grp"><div class="lab"><b>Seed 1414</b>with learned gate</div><div class="two">
+          <div class="bar h"><i data-w="31.8"></i><span>heuristic 31.8% · 1 wrong</span></div>
+          <div class="bar m"><i data-w="88.4"></i><span>learned 88.4% · 0 wrong</span></div></div></div>
       </div>
-      <div class="lgd"><span><i style="background:var(--fg)"></i>correct</span><span><i style="background:repeating-linear-gradient(135deg,var(--fg) 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px var(--fg)"></i>wrong match</span><span><i style="background:var(--s3)"></i>abstain → human</span></div>
+      <div class="lgd"><span><i style="background:repeating-linear-gradient(135deg,var(--fg) 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px var(--fg)"></i>heuristic · the default</span><span><i style="background:var(--fg)"></i>learned tracker · opt-in</span></div>
+    </div>
+    <div class="c s5 m12 p0" style="display:flex;flex-direction:column">
+      <div style="padding:clamp(20px,2.4vw,34px) clamp(20px,2.4vw,34px) 0"><div class="cell-head"><h3 class="big">Mixed drift</h3><span class="cap">objective J</span></div><p class="lede">J = correct − 5 × wrong. One wrong match costs five right ones.</p></div>
+      <table class="tt">
+        <thead><tr><th>Fresh seed · learned variant</th><th>heuristic</th><th>learned</th></tr></thead>
+        <tbody>
+          <tr><td>404 · combined</td><td class="w">398</td><td>309</td></tr>
+          <tr><td>505 · combined</td><td class="w">450</td><td>368</td></tr>
+          <tr><td>808 · matcher v3</td><td class="w">433</td><td>247</td></tr>
+          <tr><td>811 · matcher v3</td><td class="w">411</td><td>349</td></tr>
+          <tr><td>1212 · learned gate</td><td class="w">427</td><td>425</td></tr>
+          <tr><td>1313 · learned gate</td><td>402</td><td class="w">450</td></tr>
+        </tbody>
+      </table>
+      <div style="padding:20px clamp(20px,2.4vw,34px);margin-top:auto"><span class="cap">Decision, by a rule written before each test</span><p class="decide" style="margin-top:8px">Not adopted: the learned tracker must match the heuristic on every mixed seed. The gate missed by 2 points on seed 1212. The heuristic stays the default.</p></div>
     </div>
     <div class="c s6 m12 p0">
-      <div style="padding:18px 18px 0"><div class="cell-head"><h3 class="big">Confidence bar</h3><span class="cap">dev seed 101 · drag</span></div></div>
-      <svg id="plot" viewBox="0 0 600 290" aria-label="Rates against the model's confidence bar"></svg>
+      <div style="padding:18px 18px 0"><div class="cell-head"><h3 class="big">LM confidence bar</h3><span class="cap">chosen on dev, then tested</span></div></div>
+      <svg id="plot" viewBox="0 0 600 290" aria-label="Rates against the language model's confidence bar"></svg>
       <div style="padding:6px 18px 12px"><input type="range" id="sweep" min="0" max="6" value="4" aria-label="Confidence bar"></div>
       <div class="swr"><div><span class="cap">bar</span><b id="sv0">.99</b></div><div><span class="cap">present ✓</span><b id="sv1">70.7</b></div><div><span class="cap">deleted ✗</span><b id="sv3">7.2</b></div><div id="svr"><span class="cap">rule</span><b id="svR">pass</b></div></div>
     </div>
-    <div class="c s6 m12 p0">
+    <div class="c s6 m12 p0" style="display:flex;flex-direction:column">
       <table class="tt">
         <thead><tr><th>Test seed · bar 0.99</th><th>present ✓</th><th>present ✗</th><th>deleted ✗</th></tr></thead>
         <tbody>
@@ -693,48 +832,45 @@ input[type=range]{width:100%;accent-color:var(--fg)}
           <tr><td>202 · model → heuristic</td><td>73.0</td><td>1.29</td><td>6.90</td></tr>
         </tbody>
       </table>
+      <div style="padding:20px clamp(20px,2.4vw,34px);margin-top:auto;display:flex;flex-direction:column;gap:10px"><span class="cap">Decision</span><p class="decide">The dev gain did not replicate. The heuristic stays the default; <span class="mono" style="font-size:.8em">--model</span> is opt-in at 0.99.</p></div>
     </div>
-    <div class="c s6 m12" style="display:flex;flex-direction:column;justify-content:center;gap:10px">
-      <span class="cap">Decision</span>
-      <p style="font-size:clamp(20px,1.9vw,28px);font-weight:600;letter-spacing:-.02em;line-height:1.2">Gain didn't replicate. Heuristic stays default; <span class="mono" style="font-size:.8em">--model</span> is opt-in at 0.99.</p>
-    </div>
-    <div class="c s4 m12"><span class="cap">Rust tests passing</span><div class="big huge" data-count="137">137</div></div>
-    <div class="c s4 m12"><span class="cap">Python tests passing</span><div class="big huge" data-count="48">48</div></div>
-    <div class="c s4 m12"><span class="cap">Proxy end-to-end</span><div class="big huge" data-count="7">7</div></div>
-  </div>
-</section>
-
-<!-- 09 OPEN -->
-<section class="sheet" id="s9">
-  <div class="tb"><span class="no">09</span><span class="ttl">Open items</span><span class="m hide-s">docs/DESIGN.md §8–9</span><span class="m hide-s">by severity</span><span class="m">Rev r3</span></div>
-  <div style="overflow-x:auto">
-    <table class="oi">
-      <tbody>
-        <tr><td><span class="sev"><i class="f"></i><i class="f"></i><i class="f"></i></span></td><td class="it">Deleted targets</td><td>Heuristic mis-matches 6.9–17.6% of them.</td><td class="nx">gate: verify on preview first</td></tr>
-        <tr><td><span class="sev"><i class="f"></i><i class="f"></i><i class="f"></i></span></td><td class="it">Model can't say "null" yet</td><td>Can't guard deleted targets.</td><td class="nx">train longer · measure nulls</td></tr>
-        <tr><td><span class="sev"><i class="f"></i><i class="f"></i><i></i></span></td><td class="it">Synthetic data only</td><td>No real-site scores yet.</td><td class="nx">real-site benchmark</td></tr>
-        <tr><td><span class="sev"><i class="f"></i><i class="f"></i><i></i></span></td><td class="it">Shadow DOM · iframes · canvas</td><td>Out of reach for the runtime.</td><td class="nx">scope</td></tr>
-        <tr><td><span class="sev"><i class="f"></i><i></i><i></i></span></td><td class="it">clickNavigatesTo</td><td>Reported as not checked.</td><td class="nx">verify learns to click</td></tr>
-        <tr><td><span class="sev"><i class="f"></i><i></i><i></i></span></td><td class="it">Proxy buffers bodies</td><td>Large pages use memory.</td><td class="nx">streaming</td></tr>
-        <tr><td><span class="sev"><i class="f"></i><i></i><i></i></span></td><td class="it">Audit HEAD is local</td><td>Rewriting both files forges the log.</td><td class="nx">commit HEAD elsewhere</td></tr>
-      </tbody>
-    </table>
+    <div class="c s4 m12"><span class="cap">Rust tests passing</span><div class="big huge" data-count="192">192</div></div>
+    <div class="c s4 m12"><span class="cap">Python tests passing</span><div class="big huge" data-count="51">51</div></div>
+    <div class="c s4 m12"><span class="cap">Proxy end-to-end tests</span><div class="big huge" data-count="7">7</div></div>
   </div>
 </section>
 
 <!-- END -->
-<section class="sheet" id="s10">
-  <div class="tb"><span class="no">10</span><span class="ttl">End of set</span><span class="m hide-s">Rust · Playwright · PyTorch · candle</span><span class="m hide-s">10 sheets</span><span class="m">Rev r3</span></div>
+<section class="sheet" id="s9">
+  <div class="tb"><span class="no">09</span><span class="ttl">End</span><span class="rq" data-rq="1 2 3 4 5 6 7"></span></div>
   <div class="g">
     <div class="c s12" style="padding-block:28px 10px;overflow:hidden"><span class="big endmark" id="endmark">PatchWork</span></div>
-    <div class="c s3 m6"><span class="cap">crates</span><p class="mono" style="font-size:12.5px;margin-top:10px;line-height:1.9">pw-core<br>pw-proxy<br>pw-cli<br>pw-model<br>pw-train</p></div>
-    <div class="c s3 m6"><span class="cap">non-Rust</span><p class="mono" style="font-size:12.5px;margin-top:10px;line-height:1.9">runtime.js · browsers<br>editor.js · browsers<br>training/ · PyTorch</p></div>
-    <div class="c s3 m6"><span class="cap">event</span><p class="mono" style="font-size:12.5px;margin-top:10px;line-height:1.9">GDG on Campus CRCE<br>college round<br>problem 3</p></div>
-    <div class="c s3 m6" style="display:flex;flex-direction:column;gap:8px;justify-content:flex-end"><a class="k solid" href="https://github.com/JohnThrisokaran000/Shotgun_college_round" target="_blank" rel="noopener">Repository ↗</a><a class="k" href="#s0">Back to sheet 00</a></div>
+    <div class="c s12" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><a class="k" href="#s0">Back to the top</a><a class="k" href="#s2">The brief</a><a class="k solid" href="https://github.com/JohnThrisokaran000/Shotgun_college_round" target="_blank" rel="noopener">Repository ↗</a></div>
   </div>
 </section>
-<div class="foot"><span>PatchWork · drawing set</span><span>Figures from docs/DESIGN.md</span></div>
+<div class="foot"><span><span class="kbd">P</span> present · <span class="kbd">J</span> <span class="kbd">K</span> next / previous sheet</span><span>Numbers from docs/DESIGN.md and docs/MODELS.md</span></div>
 </main>
+
+<!-- presenter -->
+<div class="hud" id="hud" role="toolbar" aria-label="Presenter controls">
+  <button class="arrow" id="hPrev" aria-label="Previous step">←</button>
+  <div class="hs"><b id="hN">01 / 18</b><span id="hT">Cover</span></div>
+  <div class="rq" data-rq="1 2 3 4 5 6 7"></div>
+  <div class="ht" id="hTime"><b id="hClock">00:00</b><small id="hPace">target 0:20</small></div>
+  <button id="hTrack" title="Switch between the short and the full run">Full</button>
+  <button id="hNotes" aria-pressed="false" title="Speaker notes (N)">Notes</button>
+  <button id="hPop" title="Open the notes in a separate window for a second screen">Presenter view ⧉</button>
+  <button class="arrow" id="hNext" aria-label="Next step">→</button>
+  <button id="hExit" aria-label="Leave presenter mode (Esc)">✕</button>
+</div>
+<aside class="notes" id="notes" aria-live="polite">
+  <span class="cap" id="nPos"></span>
+  <h3 id="nT"></h3>
+  <p class="say" id="nSay"></p>
+  <div class="do" id="nDo"></div>
+  <p class="nx" id="nNext"></p>
+</aside>
+<div class="toast" id="toast" role="status"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
@@ -750,6 +886,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 if (hasG) gsap.registerPlugin(ScrollTrigger);
 
+/* ---------------- the brief's seven features: chips fill in as each one is shown ---------------- */
+const REQ = { 1: 'Visual patching', 2: 'Smart element tracking', 3: 'Collaborative editing', 4: 'Isolated preview', 5: 'Automated verification', 6: 'Versioned deployment and rollback', 7: 'Audit trail' };
+const shown = new Set();
+const onShown = [];
+$$('[data-rq]').forEach(el => {
+  el.innerHTML = el.dataset.rq.split(/\s+/).filter(Boolean).map(r => `<i data-r="${r}" title="R${r} · ${REQ[r]}">R${r}</i>`).join('');
+});
+function markShown(...rs) {
+  const fresh = rs.filter(r => !shown.has(r));
+  if (!fresh.length) return;
+  fresh.forEach(r => shown.add(r));
+  $$('.rq i[data-r]').forEach(i => i.classList.toggle('on', shown.has(+i.dataset.r)));
+  $$('#brief tr[data-r]').forEach(tr => tr.classList.toggle('shown', shown.has(+tr.dataset.r)));
+  onShown.forEach(f => f());
+}
+
+const toast = (() => { let h; return msg => { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(h); h = setTimeout(() => t.classList.remove('on'), 2800); }; })();
+
 /* ---------------- scrolling ---------------- */
 let lenis = null;
 if (!RM && typeof Lenis !== 'undefined') {
@@ -759,19 +913,15 @@ if (!RM && typeof Lenis !== 'undefined') {
     else { const raf = t => { lenis.raf(t); requestAnimationFrame(raf); }; requestAnimationFrame(raf); }
   } catch (e) { lenis = null; }
 }
-const goTo = el => lenis ? lenis.scrollTo(el, { offset: -12, duration: 1.2 }) : el.scrollIntoView({ behavior: RM ? 'auto' : 'smooth' });
-$$('a[href^="#"]').forEach(a => a.addEventListener('click', e => { const t = $(a.getAttribute('href')); if (t) { e.preventDefault(); goTo(t); } }));
+/* Scroll to an element's top, or so that its bottom sits at the bottom of the window. */
+function goTo(el, end = false) {
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const y = Math.max(0, scrollY + (end ? r.bottom - innerHeight + 18 : r.top - 12));
+  if (lenis) lenis.scrollTo(y, { duration: 1.1 }); else scrollTo({ top: y, behavior: RM ? 'auto' : 'smooth' });
+}
+$$('a[href^="#"]').forEach(a => a.addEventListener('click', e => { const t = $(a.getAttribute('href')); if (t && !a.dataset.show) { e.preventDefault(); goTo(t); } }));
 const sheets = $$('.sheet');
-addEventListener('keydown', e => {
-  if (e.target.closest('input,textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
-  const k = e.key.toLowerCase(); const d = k === 'j' ? 1 : k === 'k' ? -1 : 0; if (!d) return;
-  e.preventDefault();
-  const tops = sheets.map(s => s.getBoundingClientRect().top - 12);
-  const i = d > 0 ? tops.findIndex(t => t > 4) : tops.map((t, i) => [t, i]).filter(([t]) => t < -4).map(([, i]) => i).pop();
-  if (i != null && i >= 0) goTo(sheets[i]);
-});
-const tickClock = () => { $('#clock').textContent = new Date().toLocaleTimeString('en-GB'); };
-tickClock(); setInterval(tickClock, 1000);
 
 /* run a render loop only while its element is on screen */
 function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v = e.isIntersecting; }).observe(el); return () => v; }
@@ -942,6 +1092,25 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
 
 /* ================= 01 · problem cells ================= */
 (function problem() {
+  /* Rebuild: each token runs on a rail under its row, and the stage above it lights up as it passes. */
+  const svg = $('#lanes');
+  const lanes = [
+    { tok: $('#tok0'), boxes: $$('g[data-l="0"]', svg), dur: 7200 },
+    { tok: $('#tok1'), boxes: $$('g[data-l="1"]', svg), dur: 1500 },
+  ];
+  const X1 = 337, PAUSE = 700;
+  function place(l, p) {
+    const x = X1 * Math.min(1, p);
+    l.tok.setAttribute('x', x.toFixed(1));
+    l.boxes.forEach(b => { const bx = +b.dataset.x, bw = +b.dataset.w; b.classList.toggle('on', p <= 1 && x + 7 > bx && x < bx + bw); });
+  }
+  if (RM) lanes.forEach(l => place(l, 2));
+  else {
+    const vis = whenVisible(svg);
+    const frame = now => { requestAnimationFrame(frame); if (!vis()) return; lanes.forEach(l => place(l, (now % (l.dur + PAUSE)) / l.dur)); };
+    requestAnimationFrame(frame);
+  }
+
   const cls = ['btn-primary', 'btn-cta', 'cta--buy', 'Button_x7f3', 'btn-buy-now', 'sc-1qk2', 'primary'];
   let i = 0;
   setInterval(() => {
@@ -959,17 +1128,18 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
   }, 180);
 })();
 
-/* ================= 03 · patch anatomy ================= */
+/* ================= 04 · patch anatomy ================= */
 (function anatomy() {
   const L = [
-    ['id', 'id: ', 'fix-buy-label'], ['id', 'page: ', '/cart'], ['loc', 'anchor:', ''], ['loc', '  locators:', ''],
-    ['loc', '    css: ', 'form.cart > .actions > button.btn-primary'], ['loc', '    xpath: ', '/html/body/main/form/div[2]/button[1]'],
+    ['id', 'id: ', 'fix-buy-label'], ['id', 'author: ', 'you'], ['id', 'page: ', '/cart'], ['loc', 'anchor:', ''], ['loc', '  locators:', ''],
+    ['loc', '    css: ', "'#buy'"], ['loc', '    xpath: ', '/html/body/main/form/div[2]/button[2]'],
     ['loc', '    role: ', '{ role: button, name: "Byu now" }'], ['fp', '  fingerprint:', ''], ['fp', '    tag: ', 'button'],
-    ['fp', '    text: ', '"Byu now"'], ['fp', '    attrs: ', '{ id: buy-btn, class: "btn btn-primary" }'],
-    ['fp', '    ancestors: ', '[div.actions, form.cart, main]'], ['fp', '    neighbors: ', '["Subtotal $48.00", "Continue shopping"]'],
-    ['fp', '    box: ', '{ x: 812, y: 540, w: 148, h: 44 }'], ['ops', 'ops:', ''], ['ops', '  - op: ', 'setText'], ['ops', '    value: ', 'Buy now'],
-    ['ops', '  - op: ', 'onClickNavigate'], ['ops', '    href: ', '/checkout', '   # same-site only'], ['as', 'assert:', ''],
-    ['as', '  - visible: ', 'true'], ['as', '  - textContains: ', 'Buy now', '   # identity'], ['as', '  - clickNavigatesTo: ', '/checkout']
+    ['fp', '    text: ', '"Byu now"'], ['fp', '    attrs: ', '{ id: buy, class: "btn btn-primary", type: button }'],
+    ['fp', '    ancestors: ', '[div.actions, form#checkout.cart-form, main]'], ['fp', '    neighbors: ', '["Continue shopping"]'],
+    ['fp', '    box: ', '{ x: 812, y: 540, w: 148, h: 44 }'], ['ops', 'ops:', ''], ['ops', '- op: ', 'setText'], ['ops', '  value: ', 'Buy now'],
+    ['ops', '- op: ', 'onClickNavigate'], ['ops', '  href: ', '/checkout', '   # same-site only'], ['as', 'assert:', ''],
+    ['as', '- visible: ', 'true'], ['as', '- textContains: ', 'Buy now', '   # identity check'],
+    ['id', 'status: ', 'approved', '   # tied to this content'], ['id', 'reviewer: ', 'reviewer']
   ];
   const y = $('#yaml');
   y.innerHTML = L.map((l, i) => `<span class="ln" data-p="${l[0]}" data-n="${String(i + 1).padStart(2, '0')}"><span class="kk">${esc(l[1])}</span><span class="vv">${esc(l[2])}</span>${l[3] ? `<span class="cc">${esc(l[3])}</span>` : ''}</span>`).join('');
@@ -989,12 +1159,15 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
   for (let i = Object.keys(OPS).length; i < 24; i++) { const b = document.createElement('button'); b.textContent = '·'; b.disabled = true; g.appendChild(b); }
 })();
 
-/* ================= 04 · tracking (exploded CSS 3D) ================= */
-(function tracking() {
-  $('#wbars').innerHTML = Object.entries({ tag: 2, id: 2, name: 2, class: 1, text: 2, attrs: 1, xpath: 1, ancestors: 1, neighbours: 2, box: 1 })
-    .map(([k, v]) => `<div><i style="--h:${v * 50}%"></i><span>${k} <b style="color:var(--fg)">${v}</b></span></div>`).join('');
+/* ================= 05 · tracking (exploded CSS 3D) ================= */
+const TRACK = (function tracking() {
+  /* The similarity weights adopted in docs/DESIGN.md §6.6 (crates/pw-core/src/similarity.rs). */
+  const WB = { tag: .5, id: 3, name: 2, class: 1.5, text: 1.5, attrs: 1, xpath: .5, ancestors: 1, neighbours: 2, box: 1 };
+  $('#wbars').innerHTML = Object.entries(WB).map(([k, v]) => `<div><i style="--h:${v / 3 * 100}%"></i><span>${k} <b style="color:var(--fg)">${v}</b></span></div>`).join('');
   const M = { renameClass: 0, dropId: 0, wrap: 0, move: 0, retext: 0, decoy: 0, del: 0 };
-  const W = { tag: 2, id: 2, cls: 1, text: 2, xpath: 1, anc: 1, nbr: 2, box: 1 };
+  const W = { tag: .5, id: 3, cls: 1.5, text: 1.5, xpath: .5, anc: 1, nbr: 2, box: 1 };
+  /* Thresholds from pw_core::relocate::Config: accept 0.6, margin 0.15, surroundings 0.5, needs-a-person band from 0.45. */
+  const ACCEPT = .6, MARGIN = .15, CONTEXT = .5, REVIEW = .45;
   const score = f => { let s = 0, w = 0; for (const k in W) { if (f[k] == null) continue; s += W[k] * f[k]; w += W[k]; } return s / w; };
   const POS = { buy: [250, 262], moved: [410, 200], cont: [44, 262], decoy: [410, 332] };
   function evaluate() {
@@ -1006,7 +1179,7 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
     c.forEach(x => x.s = score(x.f)); c.sort((a, b) => b.s - a.s);
     const t = !M.del;
     const locs = [
-      { n: 'css', st: t && !M.renameClass && !M.wrap && !M.move ? 'ok' : 'no' },
+      { n: 'css #buy-btn', st: t && !M.renameClass && !M.wrap && !M.move && !M.dropId ? 'ok' : 'no' },
       { n: 'xpath', st: t && !M.wrap && !M.move ? 'ok' : 'no' },
       { n: 'testid', st: 'na' },
       { n: 'role "Buy now"', st: t && !M.retext ? (M.decoy ? 'mu' : 'ok') : 'no' },
@@ -1015,12 +1188,12 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
     const ts = c.find(x => x.k === 'buy')?.s ?? 0;
     let v, pick = null, note;
     const fast = agree >= 2 && ts >= .9;
-    if (fast) { v = 'valid'; pick = 'buy'; note = `${agree} locators agree, similarity ${ts.toFixed(2)}.`; }
+    if (fast) { v = 'valid'; pick = 'buy'; note = `${agree} locators agree, similarity ${ts.toFixed(2)}. No scoring needed.`; }
     else {
       const [a, b] = c; const lead = a.s - (b ? b.s : 0);
-      if (a.s >= .6 && lead >= .15 && a.sur >= .5) { v = 'relocated'; pick = a.k; note = `Score ${a.s.toFixed(2)}, lead ${lead.toFixed(2)}. Must pass preview before release.`; }
-      else if (a.s >= .5) { v = 'ambiguous'; note = a.s < .6 ? `Best ${a.s.toFixed(2)} < 0.60. Human picks from top 3.` : lead < .15 ? `Lead ${lead.toFixed(2)} < 0.15. Human picks from top 3.` : `Lost its surroundings. Human picks from top 3.`; }
-      else { v = 'broken'; note = 'Nothing close. Release gate refuses.'; }
+      if (a.s >= ACCEPT && lead >= MARGIN && a.sur >= CONTEXT) { v = 'relocated'; pick = a.k; note = `Score ${a.s.toFixed(2)}, lead ${lead.toFixed(2)}, surroundings kept. Provisional: the release gate wants it verified on a preview channel.`; }
+      else if (a.s >= REVIEW) { v = 'ambiguous'; note = a.s < ACCEPT ? `Best ${a.s.toFixed(2)} is under 0.60. It needs a person, who picks from the top 3.` : lead < MARGIN ? `Lead ${lead.toFixed(2)} is under 0.15. It needs a person, who picks from the top 3.` : 'It lost its surroundings. It needs a person, who picks from the top 3.'; }
+      else { v = 'broken'; note = 'Nothing close enough. The release gate refuses the patch instead of guessing.'; }
     }
     return { c, locs, v, pick, note, fast };
   }
@@ -1035,7 +1208,7 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
     anim($('#eWrap'), { left: bp[0] - 8, top: bp[1] - 8, opacity: M.wrap && !M.del ? 1 : 0 });
     anim($('#eDecoy'), { opacity: M.decoy ? 1 : 0 });
     $('#eBuyTxt').textContent = M.retext ? 'Checkout' : 'Buy now';
-    $('#eBuyTag').textContent = (M.dropId ? '' : '#buy-btn') + (M.renameClass ? '.btn-cta' : '.btn-primary');
+    $('#eBuyTag').textContent = (M.dropId ? 'button' : '#buy-btn') + (M.renameClass ? '.btn-cta' : '.btn-primary');
     $('#eBuy').classList.toggle('pick', r.pick === 'buy'); $('#eCont').classList.toggle('pick', r.pick === 'cont'); $('#eDecoy').classList.toggle('pick', r.pick === 'decoy');
     const target = r.pick === 'buy' ? bp : r.pick === 'cont' ? POS.cont : r.pick === 'decoy' ? POS.decoy : POS.buy;
     const w = r.pick === 'cont' ? 150 : 120;
@@ -1049,313 +1222,563 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
     requestAnimationFrame(() => requestAnimationFrame(() => $$('#cands .tr i').forEach((f, i) => f.style.width = r.c[i].s * 100 + '%')));
     const st = $('#stamp'); st.className = 'stamp ' + r.v; st.textContent = r.v;
     if (hasG && !RM) gsap.fromTo(st, { scale: 1.5, opacity: 0, rotate: -12 }, { scale: 1, opacity: 1, rotate: -4, duration: .45, ease: 'back.out(2.2)' });
-    $('#vnote').textContent = r.note + (r.pick === 'cont' ? ' Known failure: the deleted button relocated onto its sibling.' : '');
+    $('#vnote').textContent = r.note + (r.pick && r.pick !== 'buy' ? ' This is a wrong match; the identity check catches it in preview.' : '');
     const ch = r.c.find(x => x.k === r.pick);
-    $('#idl').innerHTML = ch ? `textContains "Buy now" → <b>${ch.text.includes('Buy now') ? 'pass' : 'fail · caught in preview'}</b>` : 'textContains "Buy now" → not run';
+    $('#idl').innerHTML = ch ? `textContains "Buy now" → <b>${ch.text.includes('Buy now') ? 'pass' : 'fail · caught in preview'}</b>` : 'textContains "Buy now" → not run · nothing to apply';
+    $$('#toggles .tg[data-m]').forEach(b => b.setAttribute('aria-pressed', !!M[b.dataset.m]));
   }
-  $$('#toggles .tg[data-m]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.m; M[k] = M[k] ? 0 : 1; b.setAttribute('aria-pressed', !!M[k]); render(); }));
-  $('#trReset').addEventListener('click', () => { for (const k in M) M[k] = 0; $$('#toggles .tg').forEach(b => b.setAttribute('aria-pressed', 'false')); render(); });
+  const PRESETS = {
+    redesign: { renameClass: 1, dropId: 1, wrap: 1 },
+    lookalike: { renameClass: 1, decoy: 1 },
+    compound: { dropId: 1, retext: 1, move: 1 },
+    deleted: { del: 1 },
+  };
+  function preset(name) {
+    for (const k in M) M[k] = PRESETS[name][k] ? 1 : 0;
+    $$('#presets .tg').forEach(b => b.setAttribute('aria-pressed', b.dataset.p === name));
+    render(); markShown(2);
+  }
+  $$('#presets .tg').forEach(b => b.addEventListener('click', () => preset(b.dataset.p)));
+  $$('#toggles .tg[data-m]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.m; M[k] = M[k] ? 0 : 1; $$('#presets .tg').forEach(x => x.setAttribute('aria-pressed', 'false')); render(); markShown(2); }));
+  $('#trReset').addEventListener('click', () => { for (const k in M) M[k] = 0; $$('#presets .tg').forEach(b => b.setAttribute('aria-pressed', 'false')); render(); });
   render();
   const xp = $('#xp'), sc = $('#xpScale'), stg = $('#xpStage');
   const fit = () => { const s = Math.min(1.05, (xp.clientWidth - 30) / 700); sc.style.transform = `scale(${s})`; };
   fit(); addEventListener('resize', fit);
   xp.addEventListener('pointermove', e => { const r = xp.getBoundingClientRect(); stg.style.setProperty('--tz', ((e.clientX - r.left) / r.width - .5) * 16 + 'deg'); stg.style.setProperty('--tx', -((e.clientY - r.top) / r.height - .5) * 10 + 'deg'); });
   xp.addEventListener('pointerleave', () => { stg.style.setProperty('--tz', '0deg'); stg.style.setProperty('--tx', '0deg'); });
-  if (hasG && !RM) gsap.fromTo(stg, { '--ex': 0.05 }, { '--ex': 1, ease: 'none', scrollTrigger: { trigger: '#s4', start: 'top 85%', end: 'top 15%', scrub: .6 } });
+  if (hasG && !RM) gsap.fromTo(stg, { '--ex': 0.05 }, { '--ex': 1, ease: 'none', scrollTrigger: { trigger: '#s5', start: 'top 85%', end: 'top 15%', scrub: .6 } });
+  return { preset };
 })();
 
-/* ================= 05 · console ================= */
-(function consoleDemo() {
+/* ================= 03 · console =================
+   A simulation in the page. The commands, flags and messages follow the real `pw` binary; the outputs
+   are copied from runs of it on a sample shop (Website/live/demo.sh runs the same story for real). */
+const CON = (function consoleDemo() {
   const out = $('#tout'), inp = $('#tin'), body = $('#tb');
-  const S = { init: false, snap: false, patches: [], checked: false, releases: [], prod: null, proxy: false, verified: false, merged: false, dead: new Set(), beacons: [], audit: [], tampered: -1, editing: false, logged: false };
+  const UP = 'http://127.0.0.1:8080', PROXY = 'http://127.0.0.1:8787', SNAP = '/cart=snapshots/cart.html';
+  const SES = ['s-4f1a2c9e', 's-9c22b07d', 's-0b7e5a13', 's-d310f8c4'];
+  const AUTHOR = { 'fix-buy-label': 'you', 'promo-banner': 'teammate' };
+  const blank = () => ({ init: false, snap: false, proxy: false, patches: [], status: {}, checked: false, dry: false, releases: [], ch: { production: null, 'preview/fix': null }, verified: new Set(), selfTried: false, conflictSeen: false, capsGone: false, merged: false, shipped: false, dead: new Set(), beacons: [], audit: [], tampered: -1, tamper: null, logged: false, auditBroken: false, view: 'production', editing: false });
+  let S = blank(), gen = 0;
   const hist = []; let hi = 0, busy = false;
-  const SES = ['s-4f1a', 's-9c22', 's-0b7e', 's-d310'];
   const line = (html, cls = '') => { const d = document.createElement('div'); d.className = 'l ' + cls; d.innerHTML = html; out.appendChild(d); body.scrollTop = body.scrollHeight; return d; };
+  const dim = t => line(esc(t), 'dim');
   const devt = (html, cls = '') => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; const dv = $('#devt'); dv.appendChild(d); while (dv.children.length > 7) dv.firstChild.remove(); };
+  const sk = (cls, txt) => `<span class="${cls}">${esc(txt)}</span>`;
+  const pad = (s, n) => String(s).padEnd(n);
+  const short = id => id ? id.slice(0, 8) : '—';
   async function sha(s) { try { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); } catch (e) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; } return h.toString(16).padStart(8, '0').repeat(8); } }
-  const shown = (a, i) => i === S.tampered ? a.body.replace(/r\d|shop/, 'r9') + ' ✎' : a.body;
-  async function audit(ev, b) { const prev = S.audit.length ? S.audit[S.audit.length - 1].hash : '0'.repeat(64); const ts = new Date().toISOString(); const h = await sha(prev + ts + ev + b); S.audit.push({ ev, body: b, ts, prev, hash: h }); renderChain(); }
-  async function verifyChain() { let prev = '0'.repeat(64); for (let i = 0; i < S.audit.length; i++) { const a = S.audit[i]; const h = await sha(prev + a.ts + a.ev + shown(a, i)); if (a.prev !== prev || h !== a.hash) return i; prev = a.hash; } return -1; }
+
+  /* ---- audit chain: each event hashes its body with the previous hash ---- */
+  const bodyOf = (a, i) => i === S.tampered && S.tamper ? a.body.replace(S.tamper[0], S.tamper[1]) : a.body;
+  const hashOf = (prev, a, b) => sha([prev, a.seq, a.ts, a.actor, a.kind, b].join('|'));
+  async function audit(actor, kind, b) {
+    const st = S; const prev = st.audit.length ? st.audit[st.audit.length - 1].hash : '0'.repeat(64);
+    const a = { seq: st.audit.length + 1, ts: Date.now(), actor, kind, body: b, prev };
+    a.hash = await hashOf(prev, a, b);
+    if (st !== S) return;
+    st.audit.push(a); renderChain();
+  }
+  async function verifyChain() {
+    let prev = '0'.repeat(64);
+    for (let i = 0; i < S.audit.length; i++) { const a = S.audit[i]; if (a.prev !== prev || await hashOf(prev, a, bodyOf(a, i)) !== a.hash) return i; prev = a.hash; }
+    return -1;
+  }
   let chainGen = 0;
   async function renderChain() {
     const my = ++chainGen; const bad = await verifyChain(); if (my !== chainGen) return;
-    const el = $('#chain'); if (!S.audit.length) { el.innerHTML = '<span class="empty">run pw init</span>'; $('#chainState').textContent = 'empty'; return; }
-    el.innerHTML = S.audit.map((a, i) => `${i ? `<span class="lnk${bad >= 0 && i === bad + 1 ? ' cut' : ''}"></span>` : ''}<div class="blk${i === S.tampered ? ' bad' : ''}"><span>#${i} · ${a.ts.slice(11, 19)}</span><b>${a.ev}</b><span>${esc(shown(a, i))}</span><span>${a.hash.slice(0, 16)}…</span></div>`).join('');
+    const el = $('#chain');
+    if (!S.audit.length) { el.innerHTML = '<span class="empty">nothing recorded yet</span>'; $('#chainState').textContent = 'empty'; return; }
+    el.innerHTML = S.audit.map((a, i) => `${i ? `<span class="lnk${bad >= 0 && i === bad + 1 ? ' cut' : ''}"></span>` : ''}<div class="blk${i === S.tampered ? ' bad' : ''}"><span>#${a.seq} · ${esc(a.actor)}</span><b>${esc(a.kind)}</b><span>${esc(bodyOf(a, i))}</span><span>${a.hash.slice(0, 16)}…</span></div>`).join('');
     el.scrollLeft = el.scrollWidth;
-    $('#chainState').textContent = bad < 0 ? `${S.audit.length} events · intact` : `broken at #${bad}`;
+    $('#chainState').textContent = bad < 0 ? `${S.audit.length} events · intact` : `broken at line ${bad + 1}`;
   }
-  const live = () => S.proxy && S.prod ? S.releases.find(r => r.id === S.prod) : null;
+
+  /* ---- what a browser on a channel sees ---- */
+  const relById = id => S.releases.find(r => r.id === id);
+  const relFor = chan => S.proxy && S.ch[chan] ? relById(S.ch[chan]) : null;
+  let lastSum = '';
   function renderSite() {
-    const r = live();
-    const has = n => !!(r && r.patches.includes(n));
-    $('#burl').textContent = S.proxy ? 'http://127.0.0.1:8787/cart' : 'http://127.0.0.1:8080/cart';
-    const ch = $('#bch'); ch.textContent = S.proxy ? 'production' : 'direct'; ch.classList.toggle('off', !S.proxy);
-    $('#brel').textContent = r ? 'release ' + r.id : 'no release';
+    const r = relFor(S.view), has = n => !!(r && r.patches.includes(n));
+    $('#chs').innerHTML = S.proxy
+      ? ['production', 'preview/fix'].map(v => `<button data-v="${v}" aria-pressed="${v === S.view}">${v}</button>`).join('')
+      : '<span>direct · no proxy</span>';
+    $('#burl').textContent = !S.proxy ? `${UP}/cart` : S.view === 'production' ? `${PROXY}/cart` : `${PROXY}/cart · cookie pw_channel=${S.view}`;
+    $('#brel').textContent = r ? 'release ' + short(r.id) : 'no release';
     if (!S.editing) $('#sbuyT').textContent = has('fix-buy-label') ? 'Buy now' : 'Byu now';
     let tag = $('#sbuy .tag');
-    if (has('fix-buy-label') && !tag) { tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'patched'; $('#sbuy').appendChild(tag); }
-    else if (!has('fix-buy-label') && tag) tag.remove();
-    $('#sban').hidden = !has('promo-banner');
-    $('#kProj').textContent = S.init ? 'shop' : 'none';
+    if (has('fix-buy-label') && !S.editing && !tag) { tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'patched'; $('#sbuy').appendChild(tag); }
+    else if ((!has('fix-buy-label') || S.editing) && tag) tag.remove();
+    const promo = has('promo-banner');
+    const sumHtml = promo ? '<span>Subtotal <b style="display:inline">$48.00</b> · <b style="display:inline">free shipping this weekend</b></span>' : '<span>Subtotal</span><b>$48.00</b>';
+    if (sumHtml !== lastSum) { $('#ssum').innerHTML = sumHtml; lastSum = sumHtml; }
+    $('#ssum').classList.toggle('patched', promo);
     $('#kPat').textContent = S.patches.length;
+    $('#kPrev').textContent = short(S.ch['preview/fix']);
+    $('#kRel').textContent = short(S.ch.production);
     $('#kProx').textContent = S.proxy ? ':8787' : 'off';
-    $('#kRel').textContent = S.prod || '—';
     const now = Date.now(); S.beacons = S.beacons.filter(b => now - b.t < 60000);
     const er = S.beacons.filter(b => b.k === 'error'); const ss = new Set(er.map(b => b.s));
     $('#kErr').textContent = er.length + '/5'; $('#kSes').textContent = ss.size + '/3';
     $$('#pE i').forEach((p, i) => p.classList.toggle('on', i < er.length)); $$('#pS i').forEach((p, i) => p.classList.toggle('on', i < ss.size));
-    const rh = S.releases.length ? S.releases.map((r, i) => `${i ? '<span class="a"></span>' : ''}<span class="r${r.id === S.prod ? ' cur' : ''}${S.dead.has(r.id) ? ' dead' : ''}">${r.id} · ${r.patches.length}p</span>`).join('') : '<span class="mono" style="color:var(--g1);font-size:12px">no releases yet</span>';
-    const rels = $('#rels'); if (rels.dataset.h !== rh) { rels.innerHTML = rh; rels.dataset.h = rh; }
-    renderSugg();
+    const rh = S.releases.length ? S.releases.map((x, i) => `${i ? '<span class="a"></span>' : ''}<span class="r${S.ch[x.channel] === x.id ? ' cur' : ''}${S.dead.has(x.id) ? ' dead' : ''}">${short(x.id)}<small>${x.channel} · ${x.patches.length}p${S.ch[x.channel] === x.id ? ' ◂' : ''}</small></span>`).join('') : '<span style="color:var(--g1)">no releases yet</span>';
+    const rels = $('#rels'); if (rels.dataset.h !== rh) { rels.innerHTML = rh; rels.dataset.h = rh; rels.scrollLeft = rels.scrollWidth; }
+    renderChap(); renderSugg();
     return { e: er.length, s: ss.size };
   }
+  $('#chs').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; setView(b.dataset.v); renderSite(); flash(); });
   function flash() { if (hasG && !RM) gsap.fromTo('#shop', { filter: 'invert(1)' }, { filter: 'invert(0)', duration: .6, ease: 'power2.out' }); }
-  let tickN = 0;
+  let bt;
+  function btoast(t) { const b = $('#btoast'); b.textContent = t; b.classList.add('on'); clearTimeout(bt); bt = setTimeout(() => b.classList.remove('on'), 1800); }
+
+  /* ---- visitors: beacons every tick while production serves a release ---- */
+  let tick = 0;
   setInterval(async () => {
-    const r = live(); tickN++;
+    const r = relFor('production'); tick++;
     if (!r) { renderSite(); return; }
-    if (r.patches.includes('promo-banner') && !S.dead.has(r.id) && r.parent) {
-      const s = SES[[0, 1, 0, 2, 1, 3][tickN % 6]];
+    if (r.patches.includes('promo-banner') && !S.dead.has(r.id)) {
+      const s = SES[[0, 1, 0, 2, 1, 3][tick % 6]];
       S.beacons.push({ k: 'error', s, t: Date.now() });
-      devt(`✕ TypeError: banner.dataset is undefined · promo-banner · ${s}`, 'e');
-      line(`<span class="dim">[proxy]</span> beacon <b>error</b> ${s} ${r.id} promo-banner`, 'as');
+      devt(`✕ Uncaught TypeError: Cannot read properties of null (reading 'textContent') · ${s}`, 'e');
+      line(`<span class="dim">[visitor ${s}]</span> error beacon · release ${short(r.id)}`, 'as');
       const m = renderSite();
-      if (m.e >= 5 && m.s >= 3) {
-        S.dead.add(r.id); S.prod = r.parent; S.beacons = [];
-        line(`<span class="hi">auto-rollback</span> production ${r.id} → ${r.parent} · 5 errors · 3 sessions · 60 s`);
-        devt(`rollback → ${r.parent} · page reloaded`, 'rb');
-        await audit('rollback', `production ${r.id} → ${r.parent} (auto)`);
-        renderSite(); flash();
+      if (m.e >= 5 && m.s >= 3 && r.parent) {
+        S.dead.add(r.id); S.ch.production = r.parent; S.beacons = [];
+        line(`<span class="hi">[proxy] auto-rollback</span> production ${esc(r.id)} → ${esc(r.parent)} · 5 error beacons from 3 sessions within 60 s`);
+        devt(`rollback → ${short(r.parent)} · next page load is clean`, 'rb');
+        await audit('proxy', 'auto-rollback', `production ${short(r.id)} → ${short(r.parent)} · TypeError (reading 'textContent')`);
+        renderSite(); flash(); btoast('production rolled back');
       }
-    } else if (tickN % 3 === 0) {
-      const s = SES[tickN % 4]; S.beacons.push({ k: 'ok', s, t: Date.now() }); devt(`✓ beacon ok · ${r.patches.join(', ')} · ${s}`); renderSite();
+    } else if (tick % 3 === 0) {
+      const s = SES[tick % 4]; S.beacons.push({ k: 'ok', s, t: Date.now() }); devt(`✓ beacon ok · ${r.patches.join(', ')} · ${s}`); renderSite();
     } else renderSite();
   }, 800);
-  const sk = (cls, txt) => `<span class="${cls}">${txt}</span>`;
-  const need = (cond, msg) => { if (!cond) { line(sk('bad', 'error') + ': ' + msg); return true; } return false; };
+
+  /* ---- animations in the shop ---- */
+  const EDP = () => `<b>PatchWork</b><div class="st" data-e="st">Click an element to select it.</div>
+    <label>Text<span class="in" data-e="text"></span></label>
+    <label>Click behaviour<span class="in" data-e="beh">(unchanged)</span></label>
+    <label>Behaviour argument<span class="in" data-e="arg"></span></label>
+    <div class="pend"><b>Pending changes</b><ul data-e="list"><li>No changes yet.</li></ul></div>
+    <div class="err" data-e="err"></div><span class="sv off" data-e="save">Save draft patch</span>`;
+  const ed = k => $(`#edp [data-e="${k}"]`);
+  async function typeInto(el, txt, d = 55) { el.textContent = ''; for (const c of txt) { el.textContent += c; if (!RM) await sleep(d); } }
+  async function moveCur(x, y, dur = .8) { const cur = $('#cur'); if (hasG && !RM) await gsap.to(cur, { left: x, top: y, duration: dur, ease: 'power2.inOut' }); else Object.assign(cur.style, { left: x + 'px', top: y + 'px' }); }
   async function editAnim() {
-    S.editing = true;
-    const shop = $('#shop'), btn = $('#sbuy'), cur = $('#cur'), ov = $('#ov');
+    S.editing = true; renderSite();
+    const shop = $('#shop'), btn = $('#sbuy'), cur = $('#cur'), ov = $('#ov'), panel = $('#edp');
     const r = shop.getBoundingClientRect(), b = btn.getBoundingClientRect();
-    if (hasG && !RM) {
-      gsap.set(cur, { opacity: 1, left: r.width * .3, top: r.height * .25 });
-      await gsap.to(cur, { left: b.left - r.left + b.width * .6, top: b.top - r.top + b.height * .6, duration: 1, ease: 'power2.inOut' });
-    }
-    Object.assign(ov.style, { left: (b.left - r.left - 4) + 'px', top: (b.top - r.top - 4) + 'px', width: (b.width + 8) + 'px', height: (b.height + 8) + 'px', opacity: 1 });
-    $('#ovT').textContent = 'button.btn-primary · click to edit';
-    await sleep(650);
-    $('#ovT').textContent = 'setText';
-    const t = $('#sbuyT'); t.textContent = '';
-    for (const ch of 'Buy now') { t.textContent += ch; await sleep(70); }
-    await sleep(300); $('#ovT').textContent = 'saved ✓ fix-buy-label.yaml'; await sleep(800);
-    ov.style.opacity = 0; if (hasG) gsap.to(cur, { opacity: 0, duration: .3 });
+    panel.innerHTML = EDP(); panel.classList.add('show');
+    cur.style.opacity = 1; if (hasG) gsap.set(cur, { left: r.width * .25, top: r.height * .2 });
+    await sleep(350);
+    await moveCur(b.left - r.left + b.width * .55, b.top - r.top + b.height * .55);
+    Object.assign(ov.style, { left: (b.left - r.left - 4) + 'px', top: (b.top - r.top - 4) + 'px', width: (b.width + 8) + 'px', height: (b.height + 8) + 'px' });
+    $('#ovT').textContent = 'button#buy.btn.btn-primary'; ov.classList.add('on');
+    ed('st').textContent = '<button id=buy> selected'; ed('text').textContent = 'Byu now';
+    await sleep(600);
+    await typeInto(ed('text'), 'Buy now'); $('#sbuyT').textContent = 'Buy now';
+    ed('list').innerHTML = '<li>text: "Buy now"</li>'; ed('save').classList.remove('off');
+    await sleep(450);
+    ed('beh').textContent = 'Navigate to a path on click';
+    await typeInto(ed('arg'), 'https://evil.example', 25);
+    ed('list').innerHTML = '<li>text: "Buy now"</li><li>click: go to https://evil.example</li>';
+    ed('arg').classList.add('bad'); ed('err').textContent = 'a click target must be a same-site path starting with a single /'; ed('save').classList.add('off');
+    await sleep(1500);
+    ed('arg').classList.remove('bad'); ed('err').textContent = '';
+    await typeInto(ed('arg'), '/checkout', 40);
+    ed('list').innerHTML = '<li>text: "Buy now"</li><li>click: go to /checkout</li>'; ed('save').classList.remove('off');
+    await sleep(500);
+    const sv = ed('save').getBoundingClientRect();
+    await moveCur(sv.left - r.left + sv.width * .5, sv.top - r.top + sv.height * .6, .6);
+    ed('save').classList.add('hit'); ed('st').textContent = 'Saved a draft patch. Next: pw review propose <id>.';
+    await sleep(900);
+    panel.classList.remove('show'); ov.classList.remove('on'); if (hasG) gsap.to(cur, { opacity: 0, duration: .3 }); else cur.style.opacity = 0;
     S.editing = false;
   }
-  async function verifyAnim() {
-    const c = $('#checks'); c.innerHTML = '';
-    for (const s of ['visible ✓', 'textContains ✓', 'clickNavigatesTo · not checked']) { const d = document.createElement('div'); d.textContent = s; c.appendChild(d); await sleep(40); d.classList.add('show'); await sleep(360); }
-    setTimeout(() => c.innerHTML = '', 3500);
+  async function verifyAnim(channel) {
+    setView(channel); renderSite();
+    const shop = $('#shop'), c = $('#checks'), mask = $('#mask'), scan = $('#scan');
+    const r = shop.getBoundingClientRect(), b = $('#sbuy').getBoundingClientRect();
+    Object.assign(mask.style, { left: (b.left - r.left - 3) + 'px', top: (b.top - r.top - 3) + 'px', width: (b.width + 6) + 'px', height: (b.height + 6) + 'px' });
+    c.innerHTML = ''; mask.classList.add('on');
+    scan.classList.remove('go'); void scan.offsetWidth; scan.classList.add('go');
+    for (const s of ['visible ✓', 'textContains "Buy now" ✓', 'pixels outside the patch: 0 of 916,806 differ ✓']) {
+      const d = document.createElement('div'); d.textContent = s; c.appendChild(d); await sleep(60); d.classList.add('show'); await sleep(RM ? 100 : 420);
+    }
+    setTimeout(() => { c.innerHTML = ''; mask.classList.remove('on'); }, 4200);
   }
-  const FILES = {
-    'pw.yaml': `name: shop\nupstream: http://127.0.0.1:8080\npolicy:\n  errors: 5\n  sessions: 3\n  window_s: 60`,
-    'patches/cart/fix-buy-label.yaml': `id: fix-buy-label\npage: /cart\nanchor:\n  locators:\n    css: form.cart > .actions > button.btn-primary\n    role: { role: button, name: "Byu now" }\nops:\n  - op: setText\n    value: Buy now\n  - op: onClickNavigate\n    href: /checkout\nassert:\n  - visible: true\n  - textContains: Buy now`,
-    'patches/cart/promo-banner.yaml': `id: promo-banner\nauthor: teammate\npage: /cart\nops:\n  - op: insertBefore\n    target: form.cart\n    html: "<div class=banner>Free shipping over $50</div>"`,
+  /* Show the preview, then production, then the preview again. Anything else that sets the view cancels it. */
+  let tour = 0, touring = false;
+  function setView(v) { tour++; touring = false; S.view = v; $('#btoast').classList.remove('on'); }
+  async function previewTour() {
+    const my = ++tour, g = gen, live = () => my === tour && g === gen;
+    touring = true;
+    try {
+      S.view = 'preview/fix'; renderSite(); flash(); btoast('preview/fix · the fix');
+      await sleep(RM ? 900 : 1700); if (!live()) return;
+      S.view = 'production'; renderSite(); btoast('production · unchanged');
+      await sleep(RM ? 900 : 1700); if (!live()) return;
+      S.view = 'preview/fix'; renderSite(); btoast('preview/fix');
+    } finally { if (my === tour) touring = false; }
+  }
+
+  /* ---- files ---- */
+  const PATCH_YAML = `id: fix-buy-label\nauthor: you\npage: /cart\nanchor:\n  locators:\n    css: '#buy'\n    xpath: /html/body/main/form/div[2]/button[2]\n    role:\n      role: button\n      name: Byu now\n  fingerprint:\n    tag: button\n    text: Byu now\n    attrs:\n      class: btn btn-primary\n      id: buy\n      type: button\n    ancestors:\n    - div.actions\n    - form#checkout.cart-form\n    - main\n    neighbors:\n    - Continue shopping\nops:\n- op: setText\n  value: Buy now\n- op: onClickNavigate\n  href: /checkout\nassert:\n- visible: true\n- textContains: Buy now`;
+  const PROMO_YAML = `id: promo-banner\nauthor: teammate\npage: /cart\nanchor:\n  locators:\n    css: '#checkout > p.sum'\n    xpath: /html/body/main/form/p[1]\n  fingerprint:\n    tag: p\n    text: Subtotal $48.00\nops:\n- op: setHTML\n  value: 'Subtotal <b>$48.00</b> &middot; <b>free shipping this weekend</b>'\nassert:\n- textContains: free shipping this weekend`;
+  const CAPS_YAML = `id: buy-label-caps\nauthor: teammate\npage: /cart\nanchor:\n  locators:\n    css: '#buy'\nops:\n- op: setText\n  value: BUY NOW`;
+  const PWTOML = `name = "northwind"\nupstream = "${UP}"\nbeacon_window_ms = 60000\nbeacon_min_errors = 5\nbeacon_min_sessions = 3\nprotected_channels = ["production"]\nbaseline_channel = "production"\nvisual_tolerance = 0.0`;
+  function file(path) {
+    const p = path.replace(/^\.\//, '');
+    if (p === 'pw.toml') return S.init ? PWTOML : null;
+    if (/(^|\/)fix-buy-label\.yaml$/.test(p) && !p.includes('teammate')) return S.patches.includes('fix-buy-label') ? PATCH_YAML + (S.status['fix-buy-label'] !== 'draft' ? `\nstatus: ${S.status['fix-buy-label']}` + (S.status['fix-buy-label'] === 'approved' ? '\nreviewer: reviewer' : '') : '') : null;
+    if (/promo-banner\.yaml$/.test(p)) return p.includes('teammate') || S.merged ? PROMO_YAML : null;
+    if (/buy-label-caps\.yaml$/.test(p)) return S.capsGone ? null : CAPS_YAML;
+    if (p === 'audit/events.jsonl') return S.audit.map((a, i) => JSON.stringify({ seq: a.seq, ts_ms: a.ts, actor: a.actor, kind: a.kind, data: bodyOf(a, i), prev: a.prev.slice(0, 16) + '…', hash: a.hash.slice(0, 16) + '…' })).join('\n') || '';
+    return null;
+  }
+
+  /* ---- the release gate for protected channels (production) ---- */
+  function gate(channel, f) {
+    if (channel !== 'production') return [];
+    const reasons = [];
+    if (!f['waive-review']) S.patches.filter(p => S.status[p] !== 'approved').forEach(p => reasons.push({ g: 'review', t: `not approved for production: ${p} is ${S.status[p]}. Each patch needs \`pw review propose\` and then \`pw review approve\` by someone other than its author` }));
+    if (!f['waive-verification'] && !S.patches.every(p => S.verified.has(p))) reasons.push({ g: 'verification', t: 'there is no verification record for this content. Publish this content to a preview channel, then run `pw verify --channel <preview> --base <URL>` until it passes' });
+    return reasons;
+  }
+
+  /* ---- commands ---- */
+  const need = (cond, msg) => { if (!cond) { line(sk('bad', 'Error') + ': ' + esc(msg)); return true; } return false; };
+  const PWC = {
+    async init(o) {
+      if (S.init) return line('Error: a project already exists in . (pw.toml)');
+      S.init = true; line('created PatchWork project `northwind` in .');
+    },
+    async snapshot(o) {
+      if (need(S.init, 'no pw.toml here: run `pw init` first')) return;
+      dim(`chromium (headless) → ${o._[0] || UP + '/cart'}`); await sleep(RM ? 0 : 600);
+      line(`captured 32 elements to ${esc(o.f.out || 'snapshots/cart.html')}`); S.snap = true;
+    },
+    async proxy() {
+      if (need(S.init, 'no pw.toml here: run `pw init` first')) return;
+      if (S.proxy) return line('Error: Address already in use (os error 98)');
+      S.proxy = true; line(`PatchWork proxy on ${PROXY} -> ${UP}`); dim('# visitors now come through :8787. Nothing is released, so the page is the same.'); renderSite(); flash();
+    },
+    async edit(o, actor) {
+      if (need(S.init, 'no pw.toml here: run `pw init` first')) return;
+      if (need(S.proxy, 'the editor loads through the proxy: start `pw proxy` first')) return;
+      if (S.patches.includes('fix-buy-label')) return line('fix-buy-label is already saved · try: cat patches/fix-buy-label.yaml');
+      setView('production'); renderSite();
+      line(`Editing ${PROXY}/cart?pw_edit=1 as ${esc(actor)}. Click an element, change it, then Save. Ctrl+C to quit.`);
+      await editAnim();
+      S.patches.push('fix-buy-label'); S.status['fix-buy-label'] = 'draft'; S.checked = false;
+      line('saved patches/fix-buy-label.yaml (draft: `pw review propose` it when it is ready)');
+      dim('# visitors still see "Byu now": nothing is released yet');
+      await audit(actor, 'patch.add', 'fix-buy-label · /cart · draft');
+    },
+    async check(o) {
+      if (need(S.patches.length, 'no patches yet: run `pw edit`')) return;
+      if (!o.f.snapshot) { S.patches.forEach(p => line(`${pad(p, 28)} /cart      skipped    conf -      no snapshot for this page`)); return; }
+      await sleep(RM ? 0 : 350);
+      const red = !!o.f.redesign;
+      S.patches.forEach(p => line(red && p === 'fix-buy-label' ? `${pad(p, 28)} /cart      ${sk('hi', 'relocated')}  conf 0.767  picked candidate 0` : `${pad(p, 28)} /cart      ${sk('ok', 'valid')}      conf 1.000  locators agree`));
+      if (red) dim('# after a redesign: the release needs --accept-relocated and a passing verify on preview');
+      else S.checked = true;
+    },
+    async release(o, actor) {
+      const channel = o.f.channel || 'production', f = o.f;
+      if (need(S.patches.length, 'nothing to release: no patches')) return;
+      if (!f.snapshot) { S.patches.forEach(p => line(`refused    ${p}: no snapshot for /cart (pass --snapshot /cart=FILE)`)); return line('Error: release blocked'); }
+      await sleep(RM ? 0 : 350);
+      const reasons = gate(channel, f);
+      if (f['dry-run']) {
+        S.dry = true;
+        if (reasons.length) { line(`dry run: the release to ${channel} would be ${sk('hi', 'BLOCKED')} by ${reasons.length} reason(s):\n${reasons.map(r => '  - ' + esc(r.t)).join('\n')}`); line('Error: dry run: nothing was published'); dim('(exit 1)'); }
+        else line(`dry run: would publish a release to ${channel} (${S.patches.length} patches)`);
+        return;
+      }
+      if (reasons.length) { line(`Error: release blocked:\n${reasons.map(r => '  - ' + esc(r.t)).join('\n')}`); await audit(actor, 'release.blocked', `${channel} · ${reasons.length} reason(s)`); return; }
+      const st = S, parent = st.ch[channel];
+      const id = (await sha([channel, st.patches.join(','), st.releases.length, Date.now()].join('|'))).slice(0, 16);
+      if (st !== S) return;
+      st.releases.push({ id, channel, parent, patches: [...st.patches] }); st.ch[channel] = id;
+      line(`released ${sk('ok', id)} to ${channel} (${st.patches.length} patches)`);
+      if (f['waive-review']) line('  waived the review gate; the waiver is in the audit log');
+      if (f['waive-verification']) line('  waived the verification gate; the waiver is in the audit log');
+      await audit(actor, 'release', `${channel} ← ${short(id)} [${st.patches.join(', ')}]`);
+      if (f['waive-review'] && st.patches.some(p => S.status[p] !== 'approved')) await audit(actor, 'release.waiver', `review · "${f['waive-review']}"`);
+      if (f['waive-verification']) await audit(actor, 'release.waiver', `verification · "${f['waive-verification']}"`);
+      if (channel === 'preview/fix') { dim(`# open ${PROXY}/__pw/channel?name=preview/fix to see it; production is unchanged`); previewTour(); }
+      if (channel === 'production') {
+        setView('production'); renderSite(); flash();
+        if (st.patches.includes('promo-banner')) { S.shipped = true; dim("# visitors' browsers are loading it now"); }
+      }
+    },
+    async verify(o, actor) {
+      const channel = o.f.channel || 'production';
+      if (need(S.proxy, `nothing answers at ${o.f.base || PROXY}: start \`pw proxy\``)) return;
+      const r = relFor(channel); if (!r) return line(`Error: channel \`${esc(channel)}\` has no release`);
+      dim(`chromium (headless) → ${PROXY}/cart on ${channel} · baseline production`);
+      await verifyAnim(channel);
+      let n = 0;
+      if (r.patches.includes('fix-buy-label')) { line(`${sk('ok', 'pass')}  ${pad('fix-buy-label', 28)} visible=true`); line(`${sk('ok', 'pass')}  ${pad('fix-buy-label', 28)} textContains Buy now`); n += 2; }
+      if (r.patches.includes('promo-banner')) { line(`${sk('ok', 'pass')}  ${pad('promo-banner', 28)} textContains free shipping this weekend`); n += 1; }
+      line(`${sk('ok', 'pass')}  ${pad('visual:/cart', 28)} visual  (0 of 916806 pixels outside the patched elements differ (0.000%, tolerance 0.000%))`); n += 1;
+      line(`verification complete: ${n} passed, 0 failed, 0 not run`);
+      line(`record verifications/${(await sha(r.patches.join())).slice(0, 16)}-${Date.now()}.json`);
+      r.patches.forEach(p => S.verified.add(p));
+      await audit(actor, 'verify', `${channel} · complete · ${n} passed, 0 failed`);
+    },
+    async review(o, actor) {
+      const sub = o._[0], id = o._[1];
+      if (sub === 'list') { if (!S.patches.length) return line('no patches'); return line(S.patches.map(p => `${pad(p, 28)} ${pad(S.status[p], 9)} author ${pad(AUTHOR[p], 11)} ${S.status[p] === 'approved' ? 'approved' : ''}`).join('\n')); }
+      if (!['propose', 'approve', 'reject'].includes(sub)) return line(esc('usage: pw review <propose|approve|reject|list> [ID]'));
+      if (!S.patches.includes(id)) return line(`Error: no patch \`${esc(id || '')}\``);
+      const digest = (await sha('content:' + id)).slice(0, 64);
+      if (sub === 'propose') {
+        S.status[id] = 'proposed'; line(`\`${id}\` is proposed for review (content ${digest})`);
+        return audit(actor, 'patch.propose', `${id} · ${digest.slice(0, 12)}`);
+      }
+      if (sub === 'reject') { S.status[id] = 'rejected'; line(`\`${id}\` rejected by ${esc(actor)}`); return audit(actor, 'patch.reject', id); }
+      if (S.status[id] !== 'proposed') return line(`Error: \`${id}\` is ${S.status[id]}; propose it first with \`pw review propose ${id}\``);
+      if (actor === AUTHOR[id] && !o.f['allow-self-review']) { S.selfTried = true; return line(`Error: \`${id}\` was written by ${esc(actor)}. Another reviewer should approve it; --allow-self-review records that you did not`); }
+      S.status[id] = 'approved'; line(`\`${id}\` approved by ${esc(actor)}`);
+      return audit(actor, 'patch.approve', `${id} · self_review: ${actor === AUTHOR[id]}`);
+    },
+    async merge(o, actor) {
+      if (need(S.init, 'no pw.toml here: run `pw init` first')) return;
+      if (!o.f.with) return line(esc('error: the following required arguments were not provided: --with <WITH>'));
+      await sleep(RM ? 0 : 350);
+      if (S.merged) return line('no hard conflicts across 2 patches\nnothing new to add');
+      if (!S.capsGone && S.patches.includes('fix-buy-label')) {
+        S.conflictSeen = true;
+        line(`${sk('hi', 'CONFLICT')} WriteWrite on /cart: buy-label-caps vs fix-buy-label (both write \`content\` with different values (\`Buy now\` vs \`BUY NOW\`))`);
+        line('warning  AnchorDependency on /cart: buy-label-caps vs fix-buy-label (`fix-buy-label` changes text that `buy-label-caps` relies on; re-fingerprint after ordering)');
+        if (o.f.write) line('nothing written: resolve the conflicts above first');
+        dim('(exit 1)');
+        return audit(actor, 'merge', '+buy-label-caps +promo-banner · 1 hard conflict · written: no');
+      }
+      line(`no hard conflicts across ${S.patches.length + 1} patches`);
+      if (!o.f.write) return dim('# add --write to copy promo-banner in');
+      S.patches.push('promo-banner'); S.status['promo-banner'] = 'draft'; S.merged = true; S.checked = false;
+      line('added promo-banner (patches/promo-banner.yaml)');
+      return audit(actor, 'merge', '+promo-banner · 0 conflicts · written: yes');
+    },
+    async rollback(o, actor) {
+      const channel = o.f.channel || 'production'; const r = relFor(channel);
+      if (!r) return line(`Error: channel \`${esc(channel)}\` has no release`);
+      if (!r.parent) return line(`Error: release \`${r.id}\` has no parent to roll back to`);
+      S.ch[channel] = r.parent; line(`${channel}: ${r.id} -> ${r.parent}`);
+      await audit(actor, 'rollback', `${channel} ${short(r.id)} → ${short(r.parent)}`); renderSite(); flash();
+    },
+    async log() {
+      S.logged = true;
+      if (!S.audit.length) return line('(no events)');
+      line(S.audit.map((a, i) => `${String(a.seq).padStart(5)}  ${a.ts}  ${pad(a.actor, 8)} ${pad(a.kind, 15)}${esc(bodyOf(a, i))}`).join('\n'));
+    },
+    async 'audit-verify'() {
+      const bad = await verifyChain();
+      if (bad < 0) return line(`audit ok: ${S.audit.length} events, head ${S.audit.length ? S.audit[S.audit.length - 1].hash : '0'.repeat(64)}`);
+      S.auditBroken = true;
+      line(`${sk('bad', 'Error')}: audit chain broken at line ${bad + 1}: hash does not match the event body (edited)`); dim('(exit 1)');
+    },
+    async 'dsl-schema'() { line('setText setHTML setAttr removeAttr setStyle addClass removeClass hide show\nmoveBefore moveAfter insertBefore insertAfter onClickNavigate onClickSubmit\nonClickFetch disable enable   ' + sk('dim', '(no script op: free JavaScript is rejected)')); },
+    async browser(o) { line(o._[0] === 'status' ? 'Chromium 153.0.8010.12' : 'usage: pw browser status'); },
   };
   const HELP = [
-    ['pw init', 'create the project'], ['pw snapshot /cart', 'capture HTML + boxes'], ['pw edit /cart', 'visual editor → patch'], ['pw check [--redesign]', 're-anchor patches'],
-    ['pw merge --with ../teammate', "pull a teammate's patches"], ['pw release [--dry-run]', 'immutable release'], ['pw proxy', 'start the proxy'],
-    ['pw verify', 'assertions in Chromium'], ['pw rollback', 'production → parent'], ['pw log', 'audit events'], ['pw audit-verify', 'check the chain'],
-    ['pw dsl-schema', 'list ops'], ['sim tamper N · sim restore', 'edit an audit line'], ['ls · cat FILE · history · clear', '']
+    ['pw init --name N --upstream URL', 'create the project'], ['pw snapshot URL --out FILE', 'capture HTML + element boxes'], ['pw proxy', 'serve the site through PatchWork'],
+    ['pw edit URL', 'visual editor → draft patch'], ['pw check --snapshot P=FILE', 're-anchor patches (add --redesign here)'],
+    ['pw release --channel C [--dry-run]', 'publish; production has a gate'], ['pw verify --channel C', 'assertions + pixel check in Chromium'],
+    ['pw review propose|approve|list', 'review states'], ['pw merge --with DIR [--write]', "a teammate's branch"], ['pw rollback', 'production → its parent'],
+    ['pw log · pw audit-verify', 'the audit trail'], ['pw --actor NAME …', 'who is acting'], ["sed -i 's/a/b/' audit/events.jsonl", 'edit the log (try it)'],
+    ['ls · cat FILE · rm FILE · history · clear', '']
   ];
   const C = {
-    help() { line(HELP.map(([a, b]) => `<span style="color:var(--fg)">${esc(a.padEnd(30))}</span><span class="dim">${esc(b)}</span>`).join('\n')); },
+    help() { line(HELP.map(([a, b]) => `<span style="color:var(--fg)">${esc(a.padEnd(38))}</span><span class="dim">${esc(b)}</span>`).join('\n')); },
     clear() { out.innerHTML = ''; },
     history() { line(hist.map((h, i) => `${String(i + 1).padStart(3)}  ${esc(h)}`).join('\n') || 'empty'); },
-    whoami() { line('maintainer · can release · cannot run script ops'); },
+    whoami() { line('you'); },
     sudo() { line('patches never need root.'); },
     ls(a) {
-      if (!S.init) return line('README.md');
-      if (a[0] && a[0].startsWith('patch')) return line(S.patches.map(p => 'patches/cart/' + p + '.yaml').join('\n') || '(empty)');
-      if (a[0] && a[0].startsWith('rel')) return line(S.releases.map(r => `releases/${r.id}.json`).join('\n') || '(empty)');
-      line('pw.yaml   patches/   releases/   snapshots/   audit.jsonl');
+      const d = (a[0] || '').replace(/\/$/, '');
+      if (!S.init) return line(d.includes('teammate') ? 'buy-label-caps.yaml  promo-banner.yaml' : '(empty)');
+      if (d === 'patches') return line(S.patches.map(p => p + '.yaml').join('  ') || '(empty)');
+      if (d.includes('teammate')) return line([S.capsGone ? '' : 'buy-label-caps.yaml', 'promo-banner.yaml'].filter(Boolean).join('  '));
+      line('pw.toml  patches/  releases/  channels/  snapshots/  verifications/  audit/');
     },
-    cat(a) {
-      const f = a[0]; if (!f) return line('usage: cat FILE');
-      const key = Object.keys(FILES).find(k => k === f || k.endsWith('/' + f));
-      const exists = key && S.init && (!key.includes('fix-buy') || S.patches.includes('fix-buy-label')) && (!key.includes('promo') || S.patches.includes('promo-banner'));
-      if (!exists) return line(`cat: ${esc(f)}: no such file`);
-      line(esc(FILES[key]));
+    cat(a) { const f = a[0]; if (!f) return line('usage: cat FILE'); const t = file(f); if (t == null) return line(`cat: ${esc(f)}: No such file or directory`); line(esc(t)); },
+    rm(a) {
+      const f = a.find(x => !x.startsWith('-')) || '';
+      if (/teammate\/patches\/buy-label-caps\.yaml$/.test(f) && !S.capsGone) { S.capsGone = true; dim("# the teammate drops their version of the label"); return; }
+      line(`rm: cannot remove '${esc(f)}': not part of this demo`);
     },
     echo(a) { line(esc(a.join(' '))); },
     async sim(a) {
-      if (a[0] === 'tamper') { const n = parseInt(a[1] ?? '1', 10); if (!S.audit[n]) return line('no such event'); S.tampered = n; await renderChain(); line(`edited audit.jsonl line ${n}`); }
-      else if (a[0] === 'restore') { S.tampered = -1; await renderChain(); line('restored audit.jsonl'); }
-      else line('usage: sim tamper N | sim restore');
+      if (a[0] === 'restore') { S.tampered = -1; S.tamper = null; S.auditBroken = false; await renderChain(); return line('restored audit/events.jsonl'); }
+      line('usage: sim restore');
     },
   };
-  const PWC = {
-    async init() {
-      if (S.init) return line('already initialised');
-      S.init = true; line('created pw.yaml  patches/  releases/  snapshots/  audit.jsonl'); line(`upstream ${sk('ok', 'http://127.0.0.1:8080')}`);
-      await audit('init', 'project shop');
-    },
-    async snapshot(a) {
-      if (need(S.init, 'no project · run pw init')) return;
-      line('chromium: loading ' + esc(a[0] || '/cart') + ' …', 'dim'); await sleep(500);
-      line('captured 214 elements with boxes → snapshots/cart.html'); S.snap = true;
-    },
-    async edit() {
-      if (need(S.init, 'no project · run pw init')) return;
-      if (S.patches.includes('fix-buy-label')) return line('fix-buy-label already exists · try: cat fix-buy-label.yaml');
-      line('opening headed Chromium with the overlay → watch the page', 'dim');
-      await editAnim();
-      S.patches.push('fix-buy-label'); S.checked = false;
-      line(`saved ${sk('ok', 'patches/cart/fix-buy-label.yaml')} · validated · identity assertion added`);
-    },
-    async check(a) {
-      if (need(S.patches.length, 'no patches · run pw edit /cart')) return;
-      line('re-anchoring against snapshots/cart.html …', 'dim'); await sleep(450);
-      const red = a.includes('--redesign');
-      S.patches.forEach(p => {
-        if (red && p === 'fix-buy-label') line(`${p.padEnd(16)}${sk('hi', 'relocated')}  0.87 · class renamed + wrapped · verify on preview`);
-        else line(`${p.padEnd(16)}${sk('ok', 'valid')}      fast path · 3 locators agree · 0.97`);
-      });
-      line(`${S.patches.length} patch${S.patches.length > 1 ? 'es' : ''} · exit 0${red ? ' · release needs --accept-relocated' : ''}`);
-      if (!red) S.checked = true;
-    },
-    async merge(a) {
-      if (need(S.init, 'no project')) return;
-      if (S.merged) return line('already up to date');
-      line('comparing with ' + esc(a.slice(1).join(' ') || '../teammate') + ' …', 'dim'); await sleep(400);
-      S.merged = true; S.patches.push('promo-banner'); S.checked = false;
-      line('+ promo-banner (teammate) · 0 hard conflicts · 0 soft');
-    },
-    async release(a) {
-      if (need(S.patches.length, 'nothing to release')) return;
-      const dry = a.includes('--dry-run');
-      line(`gate: ${S.checked ? '' : 're-anchoring … '}0 broken · 0 ambiguous · 0 hard conflicts`, 'dim'); await sleep(450);
-      const last = S.releases[S.releases.length - 1];
-      if (last && last.patches.join() === S.patches.join()) return line('no changes since ' + last.id);
-      const id = 'r' + (S.releases.length + 1);
-      if (dry) return line(`would publish ${id} with ${S.patches.length} patches`);
-      S.releases.push({ id, parent: S.prod, patches: [...S.patches] }); S.prod = id; S.checked = true;
-      line(`published ${sk('ok', id)} · ${(await sha(id + S.patches.join())).slice(0, 12)} · immutable`); line(`production → ${id}`);
-      await audit('release', `production → ${id} [${S.patches.join(', ')}]`);
-      if (S.patches.includes('promo-banner') && S.proxy) line('watching beacons …', 'dim');
-    },
-    async proxy() {
-      if (need(S.init, 'no project')) return;
-      if (S.proxy) return line('already listening on 127.0.0.1:8787');
-      S.proxy = true; line(`listening ${sk('ok', '127.0.0.1:8787')} → upstream :8080`); line('inject /__pw/runtime.js · /__pw/manifest · /__pw/beacon', 'dim'); renderSite(); flash();
-    },
-    async verify() {
-      if (need(S.proxy && S.prod, 'needs a release and a running proxy')) return;
-      line('chromium → :8787 (production) …', 'dim'); verifyAnim(); await sleep(500);
-      const r = live();
-      if (r.patches.includes('fix-buy-label')) { line(`fix-buy-label  visible           ${sk('ok', 'pass')}`); line(`fix-buy-label  textContains      ${sk('ok', 'pass')}  runtime applied the patch`); line('fix-buy-label  clickNavigatesTo  not checked', 'dim'); }
-      if (r.patches.includes('promo-banner')) line(`promo-banner   visible           ${sk('ok', 'pass')}`);
-      S.verified = true;
-    },
-    async rollback() {
-      if (need(S.prod, 'no release on production')) return;
-      const r = S.releases.find(x => x.id === S.prod);
-      if (!r.parent) return line(`${r.id} has no parent · nothing to roll back to`);
-      S.prod = r.parent; line(`production ${r.id} → ${r.parent}`); await audit('rollback', `production ${r.id} → ${r.parent} (manual)`); flash();
-    },
-    async log() { S.logged = true; if (!S.audit.length) return line('(empty)'); line(S.audit.map((a, i) => `#${i}  ${a.ts.slice(11, 19)}  ${a.ev.padEnd(9)}${esc(shown(a, i))}  ${a.hash.slice(0, 10)}`).join('\n')); },
-    async 'audit-verify'() {
-      if (!S.audit.length) return line('(empty)');
-      const bad = await verifyChain();
-      line(bad < 0 ? `${sk('ok', 'ok')} · ${S.audit.length} events · HEAD ${S.audit[S.audit.length - 1].hash.slice(0, 12)}` : `${sk('bad', 'failed')} · event #${bad} does not match its hash · exit 1`);
-    },
-    async 'dsl-schema'() { line('setText setHTML setAttr removeAttr setStyle addClass removeClass hide show\nmoveBefore moveAfter insertBefore insertAfter onClickNavigate onClickSubmit\nonClickFetch disable enable   ' + sk('dim', '(script: rejected)')); },
-    async browser(a) { line(a[0] === 'status' ? 'chromium 153 · installed' : 'usage: pw browser status'); },
-  };
-  const PW = Object.keys(PWC);
+  async function sedCmd(from, to, path) {
+    if (path !== 'audit/events.jsonl') return line(`sed: can't read ${esc(path)}: not part of this demo`);
+    const i = S.audit.findIndex(a => a.body.includes(from));
+    if (i < 0) return;
+    S.tampered = i; S.tamper = [from, to]; await renderChain();
+  }
+  const tokens = cmd => (cmd.match(/"[^"]*"|'[^']*'|\S+/g) || []).map(x => /^(["']).*\1$/.test(x) ? x.slice(1, -1) : x);
+  const BOOL = new Set(['dry-run', 'write', 'json', 'interact', 'no-visual', 'accept-relocated', 'allow-self-review', 'redesign', 'last-verified', 'headed']);
+  function opts(a) {
+    const o = { _: [], f: {} };
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '&') continue;
+      if (x.startsWith('--')) { const eq = x.indexOf('='); const k = eq > 0 ? x.slice(2, eq) : x.slice(2); if (eq > 0) o.f[k] = x.slice(eq + 1); else if (BOOL.has(k)) o.f[k] = true; else o.f[k] = a[++i] ?? ''; }
+      else o._.push(x);
+    }
+    return o;
+  }
   async function exec(raw) {
     const cmd = raw.trim();
     line(`<span class="pr">~/shop $</span> ${esc(cmd)}`, 'cmdl');
     if (!cmd) return;
     hist.push(cmd); hi = hist.length;
-    const t = cmd.split(/\s+/);
-    if (t[0] === './target/debug/pw') t[0] = 'pw';
-    if (t[0] !== 'pw' && PW.includes(t[0])) t.unshift('pw');
     try {
+      const sed = cmd.match(/^sed\s+-i\s+(['"])s\/(.+?)\/(.*?)\/g?\1\s+(\S+)$/);
+      if (sed) return await sedCmd(sed[2], sed[3], sed[4]);
+      const t = tokens(cmd);
+      if (/^(\.\/)?target\/(debug|release)\/pw$/.test(t[0])) t[0] = 'pw';
+      if (t[0] !== 'pw' && PWC[t[0]] && !C[t[0]]) t.unshift('pw');
       if (t[0] === 'pw') {
-        const a = t.slice(1).filter((x, i, arr) => x !== '--project' && arr[i - 1] !== '--project');
-        if (!a[0]) return line('usage: pw <command> · try help');
-        const f = PWC[a[0]]; if (!f) return line(`pw: unknown command '${esc(a[0])}' · try help`);
-        await f(a.slice(1));
+        const o = opts(t.slice(1)); const sub = o._.shift();
+        if (!sub) return line(esc('usage: pw [--actor NAME] <command> · try help'));
+        const f = PWC[sub]; if (!f) return line(`error: unrecognized subcommand '${esc(sub)}' · try help`);
+        await f(o, o.f.actor || 'you');
       } else if (Object.prototype.hasOwnProperty.call(C, t[0])) await C[t[0]](t.slice(1));
-      else line(`${esc(t[0])}: command not found · try help`);
+      else line(`zsh: command not found: ${esc(t[0])}`);
     } catch (e) { line('internal: ' + esc(e.message)); }
   }
-  function next() {
-    if (!S.init) return 'pw init'; if (!S.snap) return 'pw snapshot /cart'; if (!S.patches.includes('fix-buy-label')) return 'pw edit /cart';
-    if (!S.releases.length && !S.checked) return 'pw check'; if (!S.releases.length) return 'pw release'; if (!S.proxy) return 'pw proxy';
-    if (!S.verified) return 'pw verify'; if (!S.merged) return 'pw merge --with ../teammate'; if (S.releases.length < 2) return 'pw release';
-    if (!S.dead.size) return null; if (!S.logged) return 'pw log';
-    if (S.tampered < 0) return 'sim tamper 1'; return 'pw audit-verify';
-  }
-  function renderSugg() {
-    const n = next(); const k = $('#sugg');
-    const list = [n, 'pw check --redesign', 'cat fix-buy-label.yaml', 'help', 'clear'].filter((x, i, arr) => x && arr.indexOf(x) === i);
-    const key = (n || '-') + '|' + list.join('|'); if (k.dataset.key === key) return; k.dataset.key = key;
-    k.innerHTML = (n ? '' : '<button disabled style="cursor:default;color:var(--fg)">… visitors are sending beacons</button>') + list.map((c, i) => `<button class="${i === 0 && c === n ? 'nx' : ''}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
-    $$('button[data-c]', k).forEach(b => b.addEventListener('click', () => typeRun(b.dataset.c)));
+
+  /* ---- the story, as steps grouped into chapters; each step knows when it is done ---- */
+  const PLAN = [
+    { ch: 1, cmd: `pw init --name northwind --upstream ${UP}`, done: () => S.init },
+    { ch: 1, cmd: `pw snapshot ${UP}/cart --out snapshots/cart.html`, done: () => S.snap },
+    { ch: 1, cmd: 'pw proxy --listen 127.0.0.1:8787 &', done: () => S.proxy },
+    { ch: 1, cmd: `pw edit ${PROXY}/cart`, done: () => S.patches.includes('fix-buy-label') },
+    { ch: 2, cmd: `pw check --snapshot ${SNAP}`, done: () => S.checked || S.releases.length > 0 },
+    { ch: 3, cmd: `pw release --channel production --dry-run --snapshot ${SNAP}`, done: () => S.dry || !!S.ch.production },
+    { ch: 3, cmd: `pw release --channel preview/fix --snapshot ${SNAP}`, done: () => !!S.ch['preview/fix'] },
+    { ch: 4, cmd: `pw verify --base ${PROXY} --channel preview/fix`, done: () => S.verified.has('fix-buy-label') },
+    { ch: 5, cmd: 'pw review propose fix-buy-label', done: () => ['proposed', 'approved'].includes(S.status['fix-buy-label']) },
+    { ch: 5, cmd: 'pw review approve fix-buy-label', done: () => S.selfTried || S.status['fix-buy-label'] === 'approved' },
+    { ch: 5, cmd: 'pw --actor reviewer review approve fix-buy-label', done: () => S.status['fix-buy-label'] === 'approved' },
+    { ch: 5, cmd: `pw release --channel production --snapshot ${SNAP}`, done: () => !!S.ch.production },
+    { ch: 6, cmd: `pw merge --with ../teammate/patches --snapshot ${SNAP}`, done: () => S.conflictSeen || S.merged },
+    { ch: 6, cmd: 'rm ../teammate/patches/buy-label-caps.yaml', done: () => S.capsGone || S.merged },
+    { ch: 6, cmd: `pw merge --with ../teammate/patches --snapshot ${SNAP} --write`, done: () => S.merged },
+    { ch: 7, cmd: `pw --actor teammate release --channel production --snapshot ${SNAP} --waive-review "weekend sale" --waive-verification "weekend sale"`, done: () => S.shipped },
+    { ch: 7, wait: () => S.dead.size > 0 },
+    { ch: 8, cmd: 'pw log', done: () => S.logged },
+    { ch: 8, cmd: "sed -i 's/weekend sale/approved by CTO/' audit/events.jsonl", done: () => S.tampered >= 0 },
+    { ch: 8, cmd: 'pw audit-verify', done: () => S.auditBroken },
+  ];
+  const CH_REQ = { 1: [1], 2: [2], 3: [4], 4: [5], 5: [3], 6: [3], 7: [6], 8: [7] };
+  const isDone = s => s.wait ? s.wait() : s.done();
+  const chDone = k => PLAN.filter(s => s.ch === k).every(isDone);
+  let target = 0, loop = null, curCh = 0;
+  const tries = new Map();
+  function renderChap() {
+    $$('#chap button[data-ch]').forEach(b => { const k = +b.dataset.ch; const d = chDone(k); b.classList.toggle('done', d); b.classList.toggle('run', !!loop && curCh === k && !d); if (d) markShown(...CH_REQ[k]); });
+    const ra = $('#runAll'); ra.textContent = loop ? '■ Running' : chDone(8) ? '✓ Done' : '▶ Run all';
   }
   async function typeRun(c) {
-    if (busy) return; busy = true;
-    inp.value = ''; for (const ch of c) { inp.value += ch; await sleep(RM ? 0 : 22); }
-    await sleep(120); const v = inp.value; inp.value = '';
-    await exec(v); busy = false; renderSite();
+    busy = true; renderSugg();
+    inp.value = ''; const d = RM ? 0 : Math.min(24, 1100 / c.length);
+    for (const ch of c) { inp.value += ch; inp.scrollLeft = inp.scrollWidth; if (d) await sleep(d); }
+    await sleep(RM ? 0 : 160); inp.value = '';
+    try { await exec(c); } finally { busy = false; renderSite(); }
   }
+  async function drive() {
+    const my = gen;
+    for (;;) {
+      if (my !== gen) return;
+      const st = PLAN.find(s => s.ch <= target && !isDone(s));
+      if (!st) return;
+      curCh = st.ch; renderChap();
+      if (st.wait) {
+        const t0 = Date.now();
+        while (!st.wait() && Date.now() - t0 < 30000 && my === gen) await sleep(200);
+        if (!st.wait()) return;
+        continue;
+      }
+      const n = (tries.get(st) || 0) + 1; tries.set(st, n); if (n > 2) return;
+      while (busy || touring) await sleep(80);
+      if (my !== gen) return;
+      await typeRun(st.cmd);
+      await sleep(RM ? 150 : 800);
+    }
+  }
+  /* Run every step up to and including chapter `ch`. Returns when they are done. */
+  function runTo(ch) {
+    target = Math.max(target, ch);
+    if (!loop) loop = drive().finally(() => { loop = null; curCh = 0; renderSite(); });
+    return loop;
+  }
+  function next() { const st = PLAN.find(s => !isDone(s)); return st ? (st.wait ? { wait: true } : { cmd: st.cmd }) : null; }
+  function renderSugg() {
+    const n = next(); const k = $('#sugg');
+    const extra = ['pw review list', 'cat patches/fix-buy-label.yaml', `pw check --redesign --snapshot ${SNAP}`, 'help', 'clear'];
+    const list = [n && n.cmd, ...extra].filter((x, i, arr) => x && arr.indexOf(x) === i);
+    const key = (busy ? 'b' : '') + JSON.stringify(n) + list.join('|'); if (k.dataset.key === key) return; k.dataset.key = key;
+    k.innerHTML = (n && n.wait ? '<button class="nx" disabled>… visitors are loading the release</button>' : '') + list.map((c, i) => `<button class="${i === 0 && n && c === n.cmd ? 'nx' : ''}" data-c="${esc(c)}"${busy ? ' disabled' : ''}>${esc(c)}</button>`).join('');
+  }
+  $('#sugg').addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (b && !busy && !loop) typeRun(b.dataset.c); });
   inp.addEventListener('keydown', async e => {
-    if (e.key === 'Enter') { e.preventDefault(); if (busy) return; busy = true; const v = inp.value; inp.value = ''; await exec(v); busy = false; renderSite(); }
+    if (e.key === 'Enter') { e.preventDefault(); if (busy || loop) return; busy = true; const v = inp.value; inp.value = ''; try { await exec(v); } finally { busy = false; renderSite(); } }
     else if (e.key === 'ArrowUp') { e.preventDefault(); if (hi > 0) inp.value = hist[--hi]; }
     else if (e.key === 'ArrowDown') { e.preventDefault(); if (hi < hist.length - 1) inp.value = hist[++hi]; else { hi = hist.length; inp.value = ''; } }
     else if (e.key === 'Tab') {
       e.preventDefault();
-      const all = ['help', 'clear', 'history', 'ls', 'cat fix-buy-label.yaml', 'cat promo-banner.yaml', 'cat pw.yaml', 'sim tamper 1', 'sim restore', ...PW.map(p => 'pw ' + p), 'pw merge --with ../teammate', 'pw check --redesign', 'pw snapshot /cart', 'pw edit /cart', 'pw release --dry-run'];
+      const all = ['help', 'clear', 'history', 'ls', 'ls patches', 'cat pw.toml', 'cat patches/fix-buy-label.yaml', 'cat audit/events.jsonl', 'sim restore', ...PLAN.filter(s => s.cmd).map(s => s.cmd), ...Object.keys(PWC).map(p => 'pw ' + p), 'pw review list', 'pw rollback'];
       const m = [...new Set(all)].filter(x => x.startsWith(inp.value));
       if (m.length === 1) inp.value = m[0];
-      else if (m.length > 1) { line(`<span class="pr">~/shop $</span> ${esc(inp.value)}`, 'cmdl'); line(m.join('   '), 'dim'); }
+      else if (m.length > 1) { line(`<span class="pr">~/shop $</span> ${esc(inp.value)}`, 'cmdl'); line(esc(m.slice(0, 12).join('\n')), 'dim'); }
     }
     else if (e.key.toLowerCase() === 'l' && e.ctrlKey) { e.preventDefault(); out.innerHTML = ''; }
   });
   body.addEventListener('click', () => { if (!getSelection().toString()) inp.focus({ preventScroll: true }); });
-  $('#sbuy').addEventListener('click', () => devt(live() && live().patches.includes('fix-buy-label') ? '→ navigate /checkout (onClickNavigate)' : 'click: no handler · this is the bug'));
+  $('#sbuy').addEventListener('click', () => { const r = relFor(S.view); devt(r && r.patches.includes('fix-buy-label') ? '→ navigate /checkout (onClickNavigate)' : 'click: nothing happens · the bug'); });
   $('#scont').addEventListener('click', () => devt('→ /shop (upstream link)'));
-  $('#auto').addEventListener('click', async () => {
-    const b = $('#auto'); if (b.dataset.run) return; b.dataset.run = 1; b.textContent = '■ Running';
-    for (let i = 0; i < 40; i++) {
-      const n = next();
-      if (!n) { await sleep(800); continue; }
-      while (busy) await sleep(100);
-      await typeRun(n); await sleep(700);
-      if (n === 'pw audit-verify') break;
-    }
-    b.textContent = '▶ Autoplay'; delete b.dataset.run;
-  });
-  line('PatchWork console · simulated pw · type <span style="color:var(--fg)">help</span> or press NEXT below', 'dim');
-  line('the page on the right is the live site · tab completes · ↑ history', 'dim');
-  renderSite();
+  $$('#chap button[data-ch]').forEach(b => b.addEventListener('click', () => runTo(+b.dataset.ch)));
+  $('#runAll').addEventListener('click', () => runTo(8));
+  async function reset() {
+    gen++; target = 0; tries.clear();
+    while (busy || loop) await sleep(60);
+    S = blank(); lastSum = ''; out.innerHTML = ''; $('#devt').innerHTML = '<div>devtools · console</div>'; $('#checks').innerHTML = '';
+    $('#edp').classList.remove('show'); $('#ov').classList.remove('on'); $('#mask').classList.remove('on');
+    intro(); await renderChain(); renderSite();
+  }
+  $('#cReset').addEventListener('click', reset);
+  function intro() {
+    dim('PatchWork console · simulated in this page · commands and messages are those of the real pw');
+    dim('press a chapter above, ▶ Run all, the white "next" button, or type · help · tab completes · ↑ history');
+  }
+  intro(); renderSite();
+  return { runTo, reset, chDone };
 })();
 
 /* ================= 06 · system info ================= */
 (function sys() {
   const N = {
-    edit: ['pw edit', 'Headed Chromium with an overlay. Each Save writes a validated patch with an identity assertion.', 'runtime/editor.js · pw-cli/browser.rs'],
-    pw: ['Playwright', "Microsoft's driver through playwright-rs. Snapshots capture HTML and element boxes.", 'pw-cli/browser.rs'],
-    core: ['pw-core', 'Pure and deterministic. Re-anchoring, DSL validation, conflicts, releases, audit. One model hook: the Chooser trait.', 'crates/pw-core'],
+    edit: ['pw edit', 'Headed Chromium with an overlay: text, colours, font size, classes, links, visibility, moves, click behaviour and HTML. Unsafe links are blocked before Save. Each Save writes a draft patch with an identity assertion.', 'runtime/editor.js · pw-cli/browser.rs'],
+    pw: ['Playwright', "Microsoft's driver through playwright-rs. Snapshots capture HTML and element boxes; verify runs the assertions and the pixel check.", 'pw-cli/browser.rs'],
+    core: ['pw-core', 'Pure and deterministic. Re-anchoring, DSL validation, review states, conflicts, releases, audit. One model hook: the Chooser trait.', 'crates/pw-core'],
     rel: ['Releases', 'Immutable, content-addressed JSON manifests. Channels are pointers. Rollback moves a pointer.', 'pw-core/release.rs'],
-    proxy: ['pw proxy', 'The only component in the request path. Decodes gzip, deflate and brotli, injects one script, adjusts CSP. Fails open.', 'crates/pw-proxy'],
+    proxy: ['pw proxy', 'The only component in the request path. Decodes gzip, deflate and brotli, injects one script, adjusts CSP, and serves each channel its own release by cookie. Fails open.', 'crates/pw-proxy'],
     win: ['Beacons', 'Only error beacons count. 5 from 3 sessions in 60 s rolls the channel back once and writes an audit entry.', 'pw-proxy/src/lib.rs'],
     up: ['Upstream', 'The real site. Untouched, never rebuilt.', '—'],
     vis: ['Visitor', 'Runs runtime.js: applies patches idempotently, survives SPA re-renders, reports ok · missing · error.', 'runtime/runtime.js'],
   };
   const set = k => { $('#niT').textContent = N[k][0]; $('#niD').textContent = N[k][1]; $('#niP').textContent = N[k][2]; $$('#archsvg .nd').forEach(n => n.classList.toggle('on', n.dataset.n === k)); };
-  $$('#archsvg .nd').forEach(n => { n.addEventListener('mouseenter', () => set(n.dataset.n)); n.addEventListener('click', () => set(n.dataset.n)); });
+  $$('#archsvg .nd').forEach(n => { n.addEventListener('mouseenter', () => set(n.dataset.n)); n.addEventListener('click', () => set(n.dataset.n)); n.addEventListener('focus', () => set(n.dataset.n)); });
   set('proxy');
 })();
 
@@ -1400,9 +1823,9 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
     scene.add(m); scene.add(trail);
     packets.push({ m, trail, curve, t: 0, dir, i });
   }
-  let round = 0, got = 0, pulse = 0, W = 1, H = 1;
+  let got = 0, pulse = 0, W = 1, H = 1;
   const size = () => { W = host.clientWidth; H = host.clientHeight; R.setSize(W, H, false); cam.aspect = W / H; cam.updateProjectionMatrix(); };
-  size(); addEventListener('resize', size);
+  size(); if (window.ResizeObserver) new ResizeObserver(size).observe(host); else addEventListener('resize', size);
   let az = 0.6, drag = null; const el = 0.48;
   host.addEventListener('pointerdown', e => { drag = e.clientX; try { host.setPointerCapture(e.pointerId); } catch (_) {} });
   host.addEventListener('pointerup', () => drag = null);
@@ -1424,11 +1847,11 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
       p.m.position.copy(p.curve.getPoint(Math.min(1, p.t))); p.m.rotation.x += .05; p.m.rotation.y += .07;
       if (p.t >= 1) {
         scene.remove(p.m); scene.remove(p.trail); p.trail.geometry.dispose(); packets.splice(k, 1);
-        if (p.dir > 0) { got++; if (got >= 10) { round++; got = 0; pulse = 1; for (let i = 0; i < G; i++) launch(i, -1); } }
+        if (p.dir > 0) { got++; if (got >= 10) { got = 0; pulse = 1; for (let i = 0; i < G; i++) launch(i, -1); } }
         else { const g = groups[p.i]; g.prog = 0; g.sent = false; g.sp = .0035 + Math.random() * .0025; }
       }
     }
-    $('#dR').textContent = round; $('#dD').textContent = got;
+    $('#dD').textContent = got;
     R.render(scene, cam);
   }
   requestAnimationFrame(frame);
@@ -1436,9 +1859,9 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
 
 /* ================= 08 · results ================= */
 (function results() {
-  $$('.stk[data-v]').forEach(st => {
-    const v = st.dataset.v.split(',').map(Number); const set = () => $$('i', st).forEach((b, i) => b.style.width = v[i] + '%');
-    if (hasG && !RM) ScrollTrigger.create({ trigger: st, start: 'top 92%', once: true, onEnter: set }); else set();
+  $$('#cmp .bar i').forEach(b => {
+    const set = () => b.style.width = b.dataset.w + '%';
+    if (hasG && !RM) ScrollTrigger.create({ trigger: b, start: 'top 92%', once: true, onEnter: set }); else set();
   });
   const SW = [['0–.85', 89.8, 10.10, 84.1], ['.90', 89.6, 10.10, 74.9], ['.95', 81.5, 5.34, 31.4], ['.98', 74.3, 3.46, 12.6], ['.99', 70.7, 1.44, 7.2], ['.995', 70.6, 1.44, 7.2], ['.999', 70.6, 1.44, 7.2]];
   const HEU = [70.7, 1.44, 9.18];
@@ -1470,13 +1893,190 @@ function whenVisible(el) { let v = false; new IntersectionObserver(([e]) => { v 
   if (hasG && !RM) $$('[data-count]').forEach(el => { const end = +el.dataset.count, o = { v: 0 }; ScrollTrigger.create({ trigger: el, start: 'top 92%', once: true, onEnter: () => gsap.fromTo(o, { v: 0 }, { v: end, duration: 1.6, ease: 'power3.out', onUpdate: () => el.textContent = Math.round(o.v) }) }); });
 })();
 
+/* ================= "Show" buttons: jump to a feature and run it ================= */
+function demo(what) {
+  if (what === 'track') { goTo($('#s5')); setTimeout(() => TRACK.preset('redesign'), 600); return; }
+  const ch = +what; goTo($('#s3')); setTimeout(() => CON.runTo(ch), 600);
+}
+$$('[data-show]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); demo(b.dataset.show); }));
+
+/* ================= presenter mode ================= */
+const STEPS = [
+  { t: 'Cover', sec: '#s0', short: 1, time: 20,
+    say: 'PatchWork fixes live websites without rebuilding them. A fix is a small, safe patch file. A reverse proxy delivers it to visitors\' browsers, and every change is previewed, verified in a real browser, reviewed, released, and rolled back by itself if it breaks.',
+    do: 'Let the globe turn. The bright squares are live patches.' },
+  { t: 'The problem', sec: '#s1', short: 1, time: 30,
+    say: 'Three problems. A one-word typo still goes through commit, build, test, review and deploy. Tools that patch pages with CSS selectors break as soon as a redesign renames a class. And when a fix breaks in visitors\' browsers, nobody on the team finds out.',
+    do: 'Point at the three cells, left to right.' },
+  { t: 'The brief', sec: '#s2', short: 0, time: 20,
+    say: 'The problem statement lists seven features. Each row maps one to our code, the command, and how we tested it. Every Show button runs that feature on this page. I will now run all seven as one real workflow.',
+    do: 'Point at the Evidence column, then the R1–R7 chips in the bar below.' },
+  { t: 'Console · Edit', sec: '#s3', short: 1, time: 35, req: [1], run: () => CON.runTo(1),
+    say: 'Left, a terminal; right, the live shop. The commands and messages are the real CLI\'s. We create a project, snapshot the cart, and start the proxy. Visitors see no change yet. Then the visual editor: click the button, fix "Byu now", point it at checkout. A link to another site is blocked before Save. Save writes a patch file. No code, no rebuild.',
+    do: 'Wait for the editor panel: the red error on the outside link, then Save.' },
+  { t: 'Console · Check', sec: '#s3', short: 0, time: 15, req: [2], run: () => CON.runTo(2),
+    say: 'pw check finds the element again in the snapshot. Its locators agree, so it is valid on the fast path. What happens after a redesign comes in a minute.' },
+  { t: 'Console · Preview', sec: '#s3', short: 1, time: 30, req: [4], run: () => CON.runTo(3),
+    say: 'Can I push straight to production? The dry run says no: nobody has approved it, and nothing has verified it. So I release to a preview channel. Same URL, two versions. Production still shows the typo; with the preview cookie I see the fix.',
+    do: 'Click the production and preview/fix tabs above the shop.' },
+  { t: 'Console · Verify', sec: '#s3', short: 1, time: 30, req: [5], run: () => CON.runTo(4),
+    say: 'pw verify drives real Chromium through the proxy. It checks the patch\'s assertions, then compares the page with production pixel by pixel, outside the patched element: 0 of about 917,000 pixels changed. A patch that shifts the layout fails here. The result is a record tied to this exact content.' },
+  { t: 'Console · Review', sec: '#s3', short: 1, time: 35, req: [3, 6], run: () => CON.runTo(5),
+    say: 'Review. I propose the patch. I cannot approve my own work, so that is refused. A reviewer approves, and the approval is tied to the content hash: edit the patch and the approval is withdrawn. Now the production release passes the gate. Releases are immutable; a channel is just a pointer.',
+    do: 'Point at the Releases strip under the stats.' },
+  { t: 'Console · Merge', sec: '#s3', short: 0, time: 30, req: [3], run: () => CON.runTo(6),
+    say: 'A teammate worked on another branch. pw merge finds a hard conflict: we both changed the same button\'s text. Nothing is written until it is resolved. They drop their version, and the merge brings in their promo banner.' },
+  { t: 'Console · Auto-rollback', sec: '#cbottom', end: 1, short: 1, time: 40, req: [6], run: () => CON.runTo(7),
+    say: 'The teammate\'s promo banner is merged, and they are in a hurry. They waive review and verification, and both waivers go into the audit log with the reason. The banner breaks the shop\'s own JavaScript in visitors\' browsers. The runtime sends error beacons; at 5 errors from 3 sessions within a minute, the proxy rolls production back by itself. We ran this on the real binary, and that error text is what real Chromium reported.',
+    do: 'Watch the error and session meters fill, then the production pointer step back.' },
+  { t: 'Console · Audit', sec: '#cbottom', end: 1, short: 1, time: 30, req: [7], run: () => CON.runTo(8),
+    say: 'Every step is in a hash-chained log with who did it: the edit, the review, the waivers, the automatic rollback. Someone edits the waiver line to cover it up, and audit-verify names the exact line that changed.' },
+  { t: 'Anatomy of a patch', sec: '#s4', short: 0, time: 30,
+    say: 'This is the patch file. Locators and a fingerprint find the element again; operations change it; assertions check it. The DSL has 18 operations and deliberately no script op. Styles are allowlisted, links must stay on the same site, and inserted HTML is sanitised. A patch cannot run code or send data off-site.',
+    do: 'Hover A to D on the right, then the struck-out "script" op.' },
+  { t: 'Tracking · Redesign', sec: '#s5', short: 1, time: 25, req: [2], run: () => TRACK.preset('redesign'),
+    say: 'Smart tracking. A redesign renames the class, drops the id and wraps the button. The selectors miss, but the fingerprint still matches: tag, text, neighbours, ancestors, position. So the patch is relocated, and the gate wants it verified on preview before it ships.' },
+  { t: 'Tracking · Hard cases', sec: '#s5', short: 0, time: 25, req: [2], run: () => TRACK.preset('compound'),
+    say: 'When the id, the text and the position all change, the heuristic does not guess. It asks a person and shows the top three. If the button is deleted, it reports the patch broken and the release is refused. Our learned tracker handles most of these hard cases; the numbers are coming up.',
+    do: 'Then click "Deleted".' },
+  { t: 'System', sec: '#s6', short: 0, time: 20,
+    say: 'The architecture. Developer tools and a deterministic Rust core on the left. The proxy is the only part in the request path: it injects one 7.5 KB script and serves each channel its own release. Beacons from visitors drive rollback. The upstream site is never touched.',
+    do: 'Hover the pw proxy and beacon window blocks.' },
+  { t: 'Models', sec: '#s7', short: 0, time: 30,
+    say: 'We also asked whether learning helps tracking. We trained a 126.7-million-parameter language model from scratch with DiLoCo across 13 Kaggle groups, 26 T4 GPUs, syncing over a 2.3 MB/s tunnel: about 2.2 billion tokens. Rust runs it with candle and matches PyTorch to within 3e-6. And a 1.6-million-parameter matcher for tracking.' },
+  { t: 'Results', sec: '#s8', short: 1, time: 40,
+    say: 'We wrote each test rule down before running it, and used each test seed once. When an element loses its id, changes its text and moves, the heuristic relocates about a third. The learned tracker relocates 88 to 94 percent, with almost no wrong matches. On mixed changes it still makes more wrong matches, so by our own rule it is not the default; it ships opt-in. 192 Rust tests and 51 Python tests pass.',
+    do: 'Point at the hard-drift bars, then the decision text.' },
+  { t: 'Close', sec: '#s2', short: 1, time: 15,
+    say: 'That is all seven features, end to end, without rebuilding the site. Every number comes from our design doc and model card, with the command that reproduces it. We can run any part of this live on the real binary.',
+    do: 'All seven rows should be ticked. Take questions.' },
+];
+const PM = (function presenter() {
+  const P = { on: false, i: 0, track: 'full', t0: 0, notes: false, win: null };
+  /* Deep links: #present or #present-short (or ?present&track=short when served locally). */
+  const hash = location.hash.slice(1);
+  try { if (new URLSearchParams(location.search).get('track') === 'short' || hash === 'present-short') P.track = 'short'; } catch (e) {}
+  const list = () => P.track === 'short' ? STEPS.filter(s => s.short) : STEPS;
+  const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const budgetTo = i => list().slice(0, i + 1).reduce((a, s) => a + s.time, 0);
+  function render() {
+    const L = list(), s = L[P.i], n = L[P.i + 1];
+    $('#hN').textContent = `${String(P.i + 1).padStart(2, '0')} / ${String(L.length).padStart(2, '0')}`;
+    $('#hT').textContent = s.t;
+    $('#hTrack').textContent = P.track === 'short' ? 'Short' : 'Full';
+    $('#nPos').textContent = `Step ${P.i + 1} of ${L.length} · about ${s.time} s${s.req ? ' · shows ' + s.req.map(r => 'R' + r).join(' ') : ''}`;
+    $('#nT').textContent = s.t; $('#nSay').textContent = s.say;
+    $('#nDo').textContent = s.do || ''; $('#nDo').hidden = !s.do;
+    $('#nNext').textContent = n ? 'Next: ' + n.t : 'Last step';
+    $('#hNotes').setAttribute('aria-pressed', P.notes);
+    document.body.classList.toggle('nt', P.notes);
+    tickClock(); renderPop();
+  }
+  function tickClock() {
+    if (!P.on) return;
+    const el = P.t0 ? (Date.now() - P.t0) / 1000 : 0, b = budgetTo(P.i);
+    $('#hClock').textContent = fmt(el);
+    $('#hPace').textContent = `target ${fmt(b)} · total ${fmt(budgetTo(list().length - 1))}`;
+    $('#hTime').classList.toggle('late', el > b + 15);
+    if (P.win && !P.win.closed) { const d = P.win.document; d.getElementById('clock').textContent = fmt(el); d.getElementById('pace').textContent = `target ${fmt(b)}`; }
+  }
+  setInterval(tickClock, 500);
+  function go(i) {
+    const L = list(); P.i = Math.max(0, Math.min(L.length - 1, i)); const s = L[P.i];
+    const el = $(s.sec);
+    goTo(el, !!s.end);
+    sheets.forEach(x => x.classList.toggle('cur', x === el.closest('.sheet')));
+    if (s.run) setTimeout(s.run, 650);
+    render();
+  }
+  function start(i = 0) {
+    P.on = true; document.body.classList.add('pm'); if (!P.t0) P.t0 = Date.now();
+    go(i);
+  }
+  function stop() { P.on = false; document.body.classList.remove('pm', 'nt'); sheets.forEach(x => x.classList.remove('cur')); if (P.win && !P.win.closed) P.win.close(); }
+  const nextStep = () => P.i < list().length - 1 ? go(P.i + 1) : toast('That was the last step. Esc leaves presenter mode.');
+  const prevStep = () => go(P.i - 1);
+  function toggleTrack() {
+    /* Stay on the same step; if the new run skips it, stay on the last step before it, so → continues from here. */
+    const at = STEPS.indexOf(list()[P.i]); P.track = P.track === 'short' ? 'full' : 'short';
+    const L = list(); let j = -1; L.forEach((s, k) => { if (STEPS.indexOf(s) <= at) j = k; }); P.i = Math.max(0, j);
+    render(); toast(P.track === 'short' ? `Short run: ${L.length} steps, about ${fmt(budgetTo(L.length - 1))}` : `Full run: ${L.length} steps, about ${fmt(budgetTo(L.length - 1))}`);
+  }
+  const POP = `<!doctype html><html><head><meta charset="utf-8"><title>PatchWork · presenter view</title><style>
+    body{margin:0;background:#0a0a0a;color:#efefec;font:16px/1.5 "Hanken Grotesk",system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
+    header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #363636;font:13px "IBM Plex Mono",ui-monospace,monospace;color:#8c8c8c}
+    #clock{font-size:30px;color:#efefec;font-variant-numeric:tabular-nums}
+    main{flex:1;overflow:auto;padding:20px 24px}
+    h1{font-size:30px;margin:4px 0 0;letter-spacing:-.02em;line-height:1.1}
+    .say{font-size:21px;line-height:1.5;margin:16px 0}
+    .do{font-size:15px;color:#bcbcbc;border-left:2px solid #efefec;padding-left:12px}
+    .nx{color:#8c8c8c;font-size:14px;margin-top:22px}
+    footer{display:flex;border-top:1px solid #363636}
+    footer button{flex:1;background:none;border:0;border-right:1px solid #363636;color:#efefec;font:600 17px system-ui,sans-serif;padding:18px;cursor:pointer}
+    footer button:last-child{border-right:0}
+    footer button:hover{background:#151515}
+  </style></head><body><header><span id="pos"></span><span id="clock">0:00</span><span id="pace"></span></header>
+  <main><span id="req" style="font:12px ui-monospace,monospace;color:#8c8c8c"></span><h1 id="title"></h1><p class="say" id="say"></p><div class="do" id="do"></div><p class="nx" id="next"></p></main>
+  <footer><button id="prev">← Back</button><button id="fwd">Next →</button></footer></body></html>`;
+  function openPop() {
+    if (P.win && !P.win.closed) { P.win.focus(); return; }
+    const w = window.open('', 'pw-presenter', 'width=620,height=760');
+    if (!w) { toast('The browser blocked the window. Allow pop-ups, or use Notes (N).'); return; }
+    w.document.open(); w.document.write(POP); w.document.close();
+    w.document.getElementById('prev').onclick = () => prevStep();
+    w.document.getElementById('fwd').onclick = () => nextStep();
+    w.addEventListener('keydown', onKey);
+    P.win = w; renderPop();
+  }
+  function renderPop() {
+    const w = P.win; if (!w || w.closed) return;
+    const d = w.document, L = list(), s = L[P.i], n = L[P.i + 1];
+    d.getElementById('pos').textContent = `Step ${P.i + 1} / ${L.length} · ${P.track}`;
+    d.getElementById('req').textContent = s.req ? 'shows ' + s.req.map(r => `R${r} ${REQ[r]}`).join(' · ') : '';
+    d.getElementById('title').textContent = s.t; d.getElementById('say').textContent = s.say;
+    d.getElementById('do').textContent = s.do || ''; d.getElementById('do').style.display = s.do ? '' : 'none';
+    d.getElementById('next').textContent = n ? 'Next: ' + n.t : 'Last step';
+  }
+  function onKey(e) {
+    const tgt = e.target;
+    if (tgt && tgt.closest && tgt.closest('input,textarea,select')) { if (e.key === 'Escape') tgt.blur(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (k === 'p' || k === 'P') { e.preventDefault(); P.on ? stop() : start(P.i); return; }
+    if (P.on) {
+      if (['ArrowRight', 'PageDown', ' '].includes(k)) { e.preventDefault(); nextStep(); }
+      else if (['ArrowLeft', 'PageUp'].includes(k)) { e.preventDefault(); prevStep(); }
+      else if (k === 'n' || k === 'N') { P.notes = !P.notes; render(); }
+      else if (k === 'Escape') stop();
+      else if (k === 'Home') { e.preventDefault(); go(0); }
+      else if (k === 't' || k === 'T') { P.t0 = Date.now(); tickClock(); toast('Timer reset'); }
+      return;
+    }
+    const lk = k.toLowerCase(); const d = lk === 'j' ? 1 : lk === 'k' ? -1 : 0; if (!d) return;
+    e.preventDefault();
+    const tops = sheets.map(s => s.getBoundingClientRect().top - 12);
+    const i = d > 0 ? tops.findIndex(t => t > 4) : tops.map((t, i) => [t, i]).filter(([t]) => t < -4).map(([, i]) => i).pop();
+    if (i != null && i >= 0) goTo(sheets[i]);
+  }
+  addEventListener('keydown', onKey);
+  $('#hPrev').addEventListener('click', prevStep); $('#hNext').addEventListener('click', nextStep);
+  $('#hExit').addEventListener('click', stop);
+  $('#hNotes').addEventListener('click', () => { P.notes = !P.notes; render(); });
+  $('#hTrack').addEventListener('click', toggleTrack);
+  $('#hPop').addEventListener('click', openPop);
+  $('#presentBtn').addEventListener('click', () => start(0));
+  onShown.push(renderPop);
+  try { if (new URLSearchParams(location.search).has('present') || /^present/.test(hash)) start(0); } catch (e) {}
+  return { start, stop };
+})();
+
 /* ================= motion ================= */
 if (hasG && !RM) {
   gsap.from('.wordmark span', { yPercent: 100, opacity: 0, duration: 1.2, ease: 'expo.out', stagger: .12, delay: .1 });
   gsap.from('#s0 .readout > *', { opacity: 0, duration: .5, stagger: .03, delay: .5 });
-  $$('.statement, .cell-head h3, .score7 .big').forEach(el => gsap.from(el, { yPercent: 30, opacity: 0, duration: 1, ease: 'expo.out', scrollTrigger: { trigger: el, start: 'top 90%', once: true } }));
-  $$('.mx tbody tr, .oi tr').forEach((el, i) => gsap.from(el, { x: -20, opacity: 0, duration: .6, ease: 'power3.out', delay: (i % 7) * .05, scrollTrigger: { trigger: el, start: 'top 95%', once: true } }));
-  gsap.fromTo('#endmark', { xPercent: 6 }, { xPercent: -3, ease: 'none', scrollTrigger: { trigger: '#s10', start: 'top bottom', end: 'bottom top', scrub: true } });
+  $$('.statement, .cell-head h3').forEach(el => gsap.from(el, { yPercent: 30, opacity: 0, duration: 1, ease: 'expo.out', scrollTrigger: { trigger: el, start: 'top 90%', once: true } }));
+  $$('.mx tbody tr').forEach((el, i) => gsap.from(el, { x: -20, opacity: 0, duration: .6, ease: 'power3.out', delay: (i % 7) * .05, scrollTrigger: { trigger: el, start: 'top 95%', once: true } }));
+  gsap.fromTo('#endmark', { xPercent: 6 }, { xPercent: -3, ease: 'none', scrollTrigger: { trigger: '#s9', start: 'top bottom', end: 'bottom top', scrub: true } });
   addEventListener('load', () => ScrollTrigger.refresh());
 }
 })();

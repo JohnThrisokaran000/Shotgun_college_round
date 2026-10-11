@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northwind · Cart</title>
+<style>
+  body{margin:0;background:#ededea;color:#121212;font:16px/1.5 system-ui,sans-serif}
+  main{max-width:640px;margin:40px auto;padding:0 20px}
+  header{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:1px solid #cfcfca}
+  header b{font-size:22px;letter-spacing:-.02em}
+  header span{font:12px monospace;color:#6d6d6a}
+  .row{display:grid;grid-template-columns:52px 1fr auto;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid #d6d6d1}
+  .th{width:52px;height:52px;background:repeating-linear-gradient(135deg,#c9c9c4 0 6px,#bdbdb8 6px 12px)}
+  .row small{display:block;font:12px monospace;color:#6d6d6a}
+  .sum{display:flex;justify-content:space-between;padding:14px 0;margin:0}
+  #ship{font:13px monospace;color:#6d6d6a;margin:0 0 16px}
+  .actions{display:flex;gap:10px}
+  .btn{padding:12px 20px;border:1px solid #121212;font-weight:700;font-size:14px;background:#ededea;color:#121212;text-decoration:none;cursor:pointer;font-family:inherit}
+  .btn-primary{background:#121212;color:#ededea}
+</style>
+</head>
+<body>
+<main>
+  <header><b>Northwind</b><span>cart · 3 items</span></header>
+  <section class="cart">
+    <div class="row"><i class="th"></i><div><b>Stoneware mug, ash</b><small>2 × $18.00</small></div><b>$36.00</b></div>
+    <div class="row"><i class="th"></i><div><b>Linen tea towel</b><small>1 × $12.00</small></div><b>$12.00</b></div>
+    <form id="checkout" class="cart-form" action="/checkout/">
+      <p class="sum">Subtotal <b id="total">$48.00</b></p>
+      <p id="ship">&nbsp;</p>
+      <div class="actions">
+        <a class="btn" href="/">Continue shopping</a>
+        <button id="buy" class="btn btn-primary" type="button">Byu now</button>
+      </div>
+    </form>
+  </section>
+</main>
+<script>
+  // The shop's own script: keeps the free-shipping note in sync with the subtotal.
+  // It reads #total every second, so a patch that removes #total breaks it in visitors' browsers.
+  function shippingNote() {
+    var total = parseFloat(document.getElementById('total').textContent.replace('$', ''));
+    var left = Math.max(0, 50 - total);
+    var text = left ? 'Add $' + left.toFixed(2) + ' more for free shipping' : 'Free shipping';
+    var ship = document.getElementById('ship');
+    if (ship.textContent !== text) ship.textContent = text;
+  }
+  shippingNote();
+  setInterval(shippingNote, 1000);
+</script>
+</body>
+</html>

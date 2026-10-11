@@ -1,0 +1,23 @@
+# A teammate's patch on another branch. It replaces the subtotal line, which removes #total,
+# and the shop's own script reads #total every second. Visitors' browsers then throw.
+id: promo-banner
+author: teammate
+page: /
+anchor:
+  locators:
+    css: '#checkout > p.sum'
+    xpath: /html/body/main/section/form/p[1]
+  fingerprint:
+    tag: p
+    text: Subtotal $48.00
+    attrs:
+      class: sum
+    ancestors:
+    - form#checkout.cart-form
+    - section.cart
+    - main
+ops:
+- op: setHTML
+  value: 'Subtotal <b>$48.00</b> &middot; <b>free shipping this weekend</b>'
+assert:
+- textContains: free shipping this weekend

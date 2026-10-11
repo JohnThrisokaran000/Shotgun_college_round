@@ -1,0 +1,19 @@
+# The same teammate also changed the button text. It conflicts with fix-buy-label, so `pw merge` refuses to write.
+id: buy-label-caps
+author: teammate
+page: /
+anchor:
+  locators:
+    css: '#buy'
+  fingerprint:
+    tag: button
+    text: Byu now
+    attrs:
+      class: btn btn-primary
+      id: buy
+      type: button
+ops:
+- op: setText
+  value: BUY NOW
+assert:
+- textContains: BUY NOW
