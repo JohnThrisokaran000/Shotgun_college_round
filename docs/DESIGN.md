@@ -402,6 +402,8 @@ Training, on dev only. The cases are the picks the combined rule (without the ga
 
 Threshold, on dev only. τ is chosen from 0.05, 0.10, … 0.95 by the sum over the two dev seeds of J, as in 6.10. Ties go to the lower τ. The result is written to `models/matcher-demo/gate.json` before any test run.
 
+Definitions fixed before any run. Jaccard overlap of two empty sets is 0. Attribute agreement with no attributes to compare is 0. Text tokens are the lower-case runs of letters and digits.
+
 Test, fresh and used for nothing else. Mixed seeds 1212 and 1313, and compound seed 1414, 300 sites and 3 variants each.
 
 Baselines on the same seeds: the heuristic, and the combined rule without the gate (`pw train track --no-gate`).
