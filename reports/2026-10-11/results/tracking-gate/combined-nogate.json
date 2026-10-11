@@ -1,0 +1,120 @@
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 706,
+    "correct": 566,
+    "wrong_match": 11,
+    "ambiguous": 112,
+    "broken": 17,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "deleted": {
+    "cases": 194,
+    "correct": 0,
+    "wrong_match": 31,
+    "ambiguous": 9,
+    "broken": 154,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 2
+  },
+  "selector_only_present": {
+    "cases": 706,
+    "correct": 619,
+    "wrong_match": 37,
+    "ambiguous": 0,
+    "broken": 50,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 20
+  },
+  "selector_only_deleted": {
+    "cases": 194,
+    "correct": 0,
+    "wrong_match": 59,
+    "ambiguous": 0,
+    "broken": 135,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 17
+  }
+}
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 688,
+    "correct": 551,
+    "wrong_match": 13,
+    "ambiguous": 107,
+    "broken": 17,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "deleted": {
+    "cases": 212,
+    "correct": 0,
+    "wrong_match": 17,
+    "ambiguous": 14,
+    "broken": 181,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 5
+  },
+  "selector_only_present": {
+    "cases": 688,
+    "correct": 596,
+    "wrong_match": 29,
+    "ambiguous": 0,
+    "broken": 63,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 12
+  },
+  "selector_only_deleted": {
+    "cases": 212,
+    "correct": 0,
+    "wrong_match": 67,
+    "ambiguous": 0,
+    "broken": 145,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 27
+  }
+}
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 900,
+    "correct": 797,
+    "wrong_match": 0,
+    "ambiguous": 83,
+    "broken": 20,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "deleted": {
+    "cases": 0,
+    "correct": 0,
+    "wrong_match": 0,
+    "ambiguous": 0,
+    "broken": 0,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "selector_only_present": {
+    "cases": 900,
+    "correct": 661,
+    "wrong_match": 82,
+    "ambiguous": 0,
+    "broken": 157,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 54
+  },
+  "selector_only_deleted": {
+    "cases": 0,
+    "correct": 0,
+    "wrong_match": 0,
+    "ambiguous": 0,
+    "broken": 0,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  }
+}

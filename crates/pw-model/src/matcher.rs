@@ -18,6 +18,8 @@ use pw_core::relocate::{self, Choice, Chooser, Config as RelocateConfig};
 use pw_core::snapshot::Element;
 use tokenizers::Tokenizer;
 
+use crate::gate::{self, Gate};
+
 fn model_error(what: &str, e: impl std::fmt::Display) -> PwError {
     PwError::Other(format!("matcher {what}: {e}"))
 }
@@ -129,18 +131,56 @@ pub struct CombinedChooser<'a> {
     pub matcher: &'a Matcher,
     pub cfg: RelocateConfig,
     pub veto: f64,
+    /// The learned gate on the pick, when the matcher's folder has one (docs/DESIGN.md, section 6.13). `None` applies
+    /// the rule as it was before the gate existed.
+    pub gate: Option<&'a Gate>,
 }
 
-impl Chooser for CombinedChooser<'_> {
-    fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<Choice> {
+impl CombinedChooser<'_> {
+    /// The rule's answer, and for a pick the features the gate sees. The gate is not applied here, so training can
+    /// record the rule's own picks and their features.
+    pub fn decide_with_features(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<(Choice, Option<[f64; gate::N]>)> {
         let heuristic = relocate::Heuristic { cfg: self.cfg }.choose(fp, candidates)?;
         if candidates.is_empty() || heuristic == Choice::Null {
-            return Ok(heuristic);
+            return Ok((heuristic, None));
         }
         let anchor = describe::fingerprint_text(fp);
         let texts: Vec<String> = candidates.iter().map(|(el, _)| describe::element_text(el)).collect();
         let scores = self.matcher.score_many(&anchor, &texts)?;
-        Ok(relocate::combined_choice(heuristic, &scores, &self.cfg, self.veto))
+        let choice = relocate::combined_choice(heuristic, &scores, &self.cfg, self.veto);
+        let Choice::Pick { index, .. } = choice else {
+            return Ok((choice, None));
+        };
+        let sims: Vec<f64> = candidates.iter().map(|(_, s)| *s).collect();
+        let x = gate::features(fp, candidates[index].0, scores[index], margin(&scores, index), sims[index], margin(&sims, index));
+        Ok((choice, Some(x)))
+    }
+}
+
+/// How far `values[index]` leads the best of the others. A lone value leads by itself.
+fn margin(values: &[f64], index: usize) -> f64 {
+    let own = values[index];
+    let best_other = values.iter().enumerate().filter(|(i, _)| *i != index).map(|(_, v)| *v).fold(f64::NEG_INFINITY, f64::max);
+    if best_other == f64::NEG_INFINITY {
+        own
+    } else {
+        own - best_other
+    }
+}
+
+impl Chooser for CombinedChooser<'_> {
+    fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<Choice> {
+        let (choice, features) = self.decide_with_features(fp, candidates)?;
+        match (choice, self.gate, features) {
+            (Choice::Pick { index, confidence }, Some(gate), Some(x)) => {
+                if gate.accepts(&x) {
+                    Ok(Choice::Pick { index, confidence })
+                } else {
+                    Ok(Choice::Unsure)
+                }
+            }
+            (choice, _, _) => Ok(choice),
+        }
     }
 }
 

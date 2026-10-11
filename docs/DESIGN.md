@@ -412,6 +412,18 @@ Adoption rule, fixed now and the same as 6.10 applied to the fresh seeds. The ga
 
 Limits. The benchmark is synthetic (section 8). The gate is trained on one generator's dev seeds, so a pass says little about other sites. If the rule fails, the result is reported as it is, and the gate is not tuned again on these seeds.
 
+Results (2026-10-11, each step run once, nothing re-run; seeds 1212, 1313 and 1414 are spent). Training: the gate was trained on the picks of the combined rule on dev seeds 101 and 102, with the setting recorded in matcher-demo's selection.json. The summed dev objective rose with the threshold from 1187 (the rule without the gate) to a peak of 1252 at 0.80, which was chosen. Raw results: `reports/2026-10-11/results/tracking-gate/`.
+
+| Seed | Drift | Heuristic J (correct; wrong present, wrong deleted) | Combined, no gate J | Combined with the gate J |
+|---|---|---|---|---|
+| 1212 | mixed | 427 (557 of 706, 78.9%; 8, 18) | 356 (566 of 706, 80.2%; 11, 31) | 425 (555 of 706, 78.6%; 6, 20) |
+| 1313 | mixed | 402 (537 of 688, 78.1%; 9, 18) | 401 (551 of 688, 80.1%; 13, 17) | 450 (540 of 688, 78.5%; 7, 11) |
+| 1414 | compound | 281 (286 of 900, 31.8%; 1, 0) | 797 (797 of 900, 88.6%; 0, 0) | 796 (796 of 900, 88.4%; 0, 0) |
+
+Adoption rule, applied as written: (a) the gated objective is at least the heuristic's on 1212 and 1313: **false** (425 against 427 on 1212; 450 against 402 on 1313). (b) present wrong matches do not exceed the heuristic's: true. (c) deleted wrong matches do not exceed the heuristic's: **false** (20 against 18 on 1212). (d) on compound 1414 the correct rate is at least 10 points above the heuristic's: true, a gain of 56.7 points. **Not adopted.** The heuristic stays the default, and the gated tracker stays opt-in, as `--matcher`.
+
+What this shows. Against the combined rule without the gate, on the same fresh seeds, the gate cuts wrong matches on both mixed seeds (present wrong 11 to 6 and 13 to 7; deleted wrong 31 to 20 and 17 to 11) and raises the objective on both (356 to 425, and 401 to 450). It keeps the compound gain (88.4% against the heuristic's 31.8%). Against the heuristic it is level on mixed drift: 2 points short on 1212 and 48 ahead on 1313. The rule fails narrowly, on seed 1212, and the rule was not changed after the results. A stronger claim needs a new pre-registered protocol with seeds not yet used.
+
 ## 7. Deviations from the plan and the brief
 
 1. **Model from scratch, architecture from a reference only.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply. EmbeddingGemma-300M supplies the layer design only. Its weights and tokenizer are not used.
