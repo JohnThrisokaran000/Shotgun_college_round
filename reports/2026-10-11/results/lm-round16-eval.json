@@ -1,0 +1,16 @@
+{
+  "weights": "models/lm-global/model.safetensors",
+  "params": 126702336,
+  "general_heldout_loss": 2.3123,
+  "general_heldout_ppl": 10.1,
+  "patchwork_heldout_loss": 0.0081,
+  "relocate_n": 300,
+  "author_n": 300,
+  "relocate_exact": 0.9467,
+  "relocate_pick_exact": 0.9772,
+  "relocate_refusal_exact": 0.7297,
+  "relocate_wrong_pick_rate": 0.0467,
+  "relocate_refusal_share": 0.1233,
+  "author_exact": 1.0,
+  "author_valid_json": 1.0
+}

@@ -436,9 +436,22 @@ def lm_section(lines: list[str], summary: list[str]) -> None:
         "",
     ]
     if lm_eval:
-        lines.append("```json")
-        lines.append(json.dumps(lm_eval, indent=2)[:3000])
-        lines.append("```")
+        lines += [
+            "| Measure | Value | What it is |",
+            "|---|---|---|",
+            f"| General held-out loss | {lm_eval['general_heldout_loss']:.4f} nats per token (perplexity {lm_eval['general_heldout_ppl']}) | teacher-forced loss on whole packages never seen in training |",
+            f"| PatchWork held-out loss | {lm_eval['patchwork_heldout_loss']:.4f} nats per completion token | the same on held-out synthetic PatchWork sites |",
+            f"| Relocation, exact answer | {100 * lm_eval['relocate_exact']:.2f}% of {lm_eval['relocate_n']} held-out sites | greedy answer equals the gold answer |",
+            f"| Relocation, element picks | {100 * lm_eval['relocate_pick_exact']:.2f}% exact | sites whose gold answer is an element |",
+            f"| Relocation, refusals | {100 * lm_eval['relocate_refusal_exact']:.2f}% exact | sites whose gold answer is no element ({100 * lm_eval['relocate_refusal_share']:.1f}% of sites) |",
+            f"| Relocation, wrong picks | {100 * lm_eval['relocate_wrong_pick_rate']:.2f}% | harmful errors: an element picked where the answer was a refusal, or the wrong element |",
+            f"| Author, exact operations | {100 * lm_eval['author_exact']:.2f}% of {lm_eval['author_n']} | the patch operations match the gold answer |",
+            f"| Author, valid DSL JSON | {100 * lm_eval['author_valid_json']:.2f}% | the answer parses as the patch DSL |",
+            "",
+            "The PatchWork and relocation figures are on synthetic sites from the same generator as the training data, "
+            "held out by seed, not by distribution. They do not show performance on real sites, and the model relocates "
+            "nothing on the hand-made redesign in `demo/tracking`.",
+        ]
     else:
         lines.append("Not recorded: the evaluation result file is missing.")
     lines += [
