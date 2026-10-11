@@ -379,6 +379,37 @@ Visual patching. The editor lists the pending changes in words as the fields cha
 
 Smart element tracking. One pre-registered change was tested (section 6.11). It was not adopted, so no tracking change ships from this round. The compound gain held on a fresh seed. The mixed-drift errors did not improve.
 
+### 6.13 A learned gate on the combined tracker: protocol, written before any test run (2026-10-11)
+
+Why. The combined rule (section 6.10) applies the matcher's pick under four thresholds. The matcher sees only the two text descriptions. The thresholds cannot weigh the pick's structure against the matcher's score, and on mixed drift the matcher picks a wrong element or picks something for an absent target (sections 6.10 and 6.11). This section adds a gate that sees the pick's structure as well.
+
+Candidate. The combined rule with matcher-demo, using the setting recorded in its `selection.json` (section 6.10), plus a logistic gate. When the combined rule picks a candidate, the gate computes eleven features of that pick. The pick is applied only if the gate's probability is at least τ. Otherwise the answer is Unsure, and a person decides.
+
+Features. All are available at run time, with no gold label. For the picked candidate, and the anchor's fingerprint fp:
+1. p: the matcher's probability for the pick.
+2. p_margin: p minus the matcher's probability for the next candidate (p when there is none).
+3. sim: the heuristic similarity of the pick.
+4. sim_margin: sim minus the next candidate's heuristic similarity (sim when there is none).
+5. tag_equal: 1 if the tags are equal, else 0.
+6. class_jaccard: Jaccard overlap of the class tokens.
+7. attr_agree: the share of fp's attributes, excluding id and data-*, that the candidate has with the same value.
+8. ancestor_jaccard: Jaccard overlap of the ancestor tag lists.
+9. neighbour_jaccard: Jaccard overlap of the neighbour lists.
+10. text_jaccard: Jaccard overlap of the lower-case word tokens of the text.
+11. depth_ratio: the shorter ancestor list's length divided by the longer one's (1 when they are equal or both are empty).
+
+Training, on dev only. The cases are the picks the combined rule (without the gate) makes on dev seeds 101 (mixed) and 102 (compound), 300 sites and 3 variants each. The label is 1 if the pick is the gold element and 0 otherwise. Every pick on a deleted target is labelled 0. Each feature is standardised with the training means and standard deviations. The model is logistic regression with an L2 penalty of 1e-3 on the weights (not the bias), 3000 steps of full-batch gradient descent at learning rate 0.1, starting from zero weights. There is no early stopping.
+
+Threshold, on dev only. τ is chosen from 0.05, 0.10, … 0.95 by the sum over the two dev seeds of J, as in 6.10. Ties go to the lower τ. The result is written to `models/matcher-demo/gate.json` before any test run.
+
+Test, fresh and used for nothing else. Mixed seeds 1212 and 1313, and compound seed 1414, 300 sites and 3 variants each.
+
+Baselines on the same seeds: the heuristic, and the combined rule without the gate (`pw train track --no-gate`).
+
+Adoption rule, fixed now and the same as 6.10 applied to the fresh seeds. The gated tracker becomes the default only if all of these hold: (a) its objective is at least the heuristic's on 1212 and on 1313; (b) its present wrong matches do not exceed the heuristic's on 1212 and 1313; (c) its deleted wrong matches do not exceed the heuristic's on 1212 and 1313; (d) on 1414 its correct rate is at least ten points above the heuristic's.
+
+Limits. The benchmark is synthetic (section 8). The gate is trained on one generator's dev seeds, so a pass says little about other sites. If the rule fails, the result is reported as it is, and the gate is not tuned again on these seeds.
+
 ## 7. Deviations from the plan and the brief
 
 1. **Model from scratch, architecture from a reference only.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply. EmbeddingGemma-300M supplies the layer design only. Its weights and tokenizer are not used.
