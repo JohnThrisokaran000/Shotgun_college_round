@@ -21,3 +21,4 @@ kaggle/plan*/
 models/*
 !models/matcher-v2/
 !models/matcher-demo/
+!models/lm-global/

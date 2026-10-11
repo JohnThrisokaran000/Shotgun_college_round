@@ -8,6 +8,7 @@ pub mod conflict;
 pub mod describe;
 pub mod dsl;
 pub mod error;
+pub mod hash;
 pub mod patch;
 pub mod prompt;
 pub mod relocate;

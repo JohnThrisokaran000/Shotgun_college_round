@@ -339,10 +339,10 @@ enum TrainCmd {
         sites: usize,
         #[arg(long, default_value_t = 3)]
         variants: usize,
-        /// Run the whole grid and select one setting
+        /// Run the whole grid, select one setting, and write it to selection.json in the matcher folder
         #[arg(long, conflicts_with = "setting")]
         grid: bool,
-        /// One setting, as accept,margin,review,veto
+        /// One setting, as accept,margin,review,veto. Without it, the setting in the matcher's selection.json is used
         #[arg(long, value_name = "A,M,R,V")]
         setting: Option<String>,
         #[arg(long)]
@@ -968,9 +968,19 @@ fn rewrites_or_publishes(cmd: &Cmd) -> bool {
 async fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     let actor = project::resolve_actor(cli.actor.as_deref());
-    if let Some(dir) = &cli.matcher {
-        project::install_matcher(dir)?;
-        eprintln!("note: combined tracker on (opt-in): the heuristic decides, the matcher decides when the heuristic is unsure");
+    // The `train` commands take their own --matcher (the folder they tune or bench), so the global one is not loaded
+    // for them. That lets `track --grid` choose the setting that the global flag later requires.
+    if let Some(dir) = cli.matcher.as_ref().filter(|_| !matches!(cli.cmd, Cmd::Train { .. })) {
+        let s = project::install_matcher(dir)?.setting;
+        eprintln!(
+            "note: combined tracker on (opt-in): the heuristic decides, the matcher decides when the heuristic is unsure. \
+             Setting from {}: accept={} margin={} review={} veto={}",
+            dir.join(pw_model::SELECTION_FILE).display(),
+            s.accept,
+            s.margin,
+            s.review,
+            s.veto
+        );
     }
     if let Some(dir) = &cli.model {
         project::install_model(dir)?;
@@ -1117,6 +1127,21 @@ async fn main() -> Result<ExitCode> {
                     let best = (0..settings.len())
                         .max_by_key(|&i| (totals[i].0, totals[i].1, totals[i].2, -(i as i64)))
                         .context("the grid is empty")?;
+                    let (a, m, r, v) = settings[best];
+                    let selection = pw_model::Selection {
+                        schema: pw_model::SELECTION_SCHEMA,
+                        method: "grid".into(),
+                        setting: pw_model::Setting { accept: a, margin: m, review: r, veto: v },
+                        objective_sum: totals[best].0,
+                        slices: parsed.iter().map(|(seed, drift)| format!("{seed}:{drift:?}").to_lowercase()).collect(),
+                        sites: sites as u64,
+                        variants: variants as u64,
+                        settings_searched: settings.len(),
+                        matcher_sha256: pw_core::hash::file_sha256(&matcher.join("model.safetensors"))?,
+                        written_by: "pw train track --grid".into(),
+                    };
+                    let written = selection.write(&matcher)?;
+                    eprintln!("selection written to {}", written.display());
                     if json {
                         let picks: Vec<_> = runs_by_slice.iter().map(|runs| &runs[best].2).collect();
                         let (a, m, r, v) = settings[best];
@@ -1140,7 +1165,15 @@ async fn main() -> Result<ExitCode> {
                     }
                     return Ok(ExitCode::SUCCESS);
                 }
-                let (a, m, r, v) = parse_setting(setting.as_deref().context("give --setting A,M,R,V, or --grid")?)?;
+                // Without --setting, the setting the grid recorded for this matcher is used, after checking the weights.
+                let (a, m, r, v) = match setting.as_deref() {
+                    Some(spec) => parse_setting(spec)?,
+                    None => {
+                        let sel = pw_model::Selection::load(&matcher)?;
+                        sel.check_matcher(&matcher)?;
+                        (sel.setting.accept, sel.setting.margin, sel.setting.review, sel.setting.veto)
+                    }
+                };
                 let settings = [(a, m, r, v)];
                 for (seed, drift) in &parsed {
                     let runs = pw_train::bench::run_combined_grid(sites, variants, *seed, *drift, &loaded, base, &settings)?;

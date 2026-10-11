@@ -10,7 +10,9 @@
 mod chooser;
 mod matcher;
 mod model;
+mod selection;
 
 pub use chooser::{alone, decide, Judgement, ModelChooser, ModelFirst};
 pub use matcher::{CombinedChooser, Matcher, MatcherChooser, MatcherOnly};
 pub use model::{Generation, Model};
+pub use selection::{Selection, Setting, SELECTION_FILE, SELECTION_SCHEMA};

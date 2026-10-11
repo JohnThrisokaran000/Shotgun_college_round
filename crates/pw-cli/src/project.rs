@@ -243,17 +243,18 @@ static MODEL: std::sync::OnceLock<pw_model::ModelChooser> = std::sync::OnceLock:
 
 /// The trained matcher, when the command was given `--matcher`. The combined tracker uses it (docs/DESIGN.md, 6.10).
 static MATCHER: std::sync::OnceLock<pw_model::Matcher> = std::sync::OnceLock::new();
-/// The thresholds and veto of the combined tracker's selected setting on the development split (section 6.10).
-const COMBINED_ACCEPT: f64 = 0.8;
-const COMBINED_MARGIN: f64 = 0.2;
-const COMBINED_REVIEW: f64 = 0.4;
-const COMBINED_VETO: f64 = 0.4;
+/// The setting the combined tracker uses with that matcher, read from its `selection.json` (section 6.10).
+static SELECTION: std::sync::OnceLock<pw_model::Selection> = std::sync::OnceLock::new();
 
-/// Load the matcher for this process. Refuses a folder that does not load.
-pub fn install_matcher(dir: &Path) -> Result<()> {
+/// Load the matcher and its selected setting for this process. Refuses a folder that does not load, has no
+/// selection, or was selected for other weights.
+pub fn install_matcher(dir: &Path) -> Result<pw_model::Selection> {
+    let selection = pw_model::Selection::load(dir)?;
+    selection.check_matcher(dir)?;
     let matcher = pw_model::Matcher::load(dir).with_context(|| format!("loading the matcher in {}", dir.display()))?;
     let _ = MATCHER.set(matcher);
-    Ok(())
+    let _ = SELECTION.set(selection.clone());
+    Ok(selection)
 }
 
 /// Load the model for this process. Refuses a folder that does not load, so a typo cannot silently fall back.
@@ -266,9 +267,10 @@ pub fn install_model(dir: &Path) -> Result<()> {
 
 pub fn relocate_one(patch: &Patch, snap: &Snapshot) -> Result<Outcome> {
     let cfg = RelocateConfig::default();
-    if let Some(matcher) = MATCHER.get() {
-        let cfg = RelocateConfig { matcher_accept: COMBINED_ACCEPT, matcher_margin: COMBINED_MARGIN, matcher_review: COMBINED_REVIEW, ..cfg };
-        let chooser = pw_model::CombinedChooser { matcher, cfg, veto: COMBINED_VETO };
+    if let (Some(matcher), Some(selection)) = (MATCHER.get(), SELECTION.get()) {
+        let s = selection.setting;
+        let cfg = RelocateConfig { matcher_accept: s.accept, matcher_margin: s.margin, matcher_review: s.review, ..cfg };
+        let chooser = pw_model::CombinedChooser { matcher, cfg, veto: s.veto };
         return Ok(relocate::relocate(&patch.anchor, snap, &chooser, &cfg)?);
     }
     let heuristic = Heuristic { cfg };

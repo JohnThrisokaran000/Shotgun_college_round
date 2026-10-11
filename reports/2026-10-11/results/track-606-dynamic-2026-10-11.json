@@ -1,0 +1,40 @@
+{
+  "sites": 300,
+  "variants": 3,
+  "present": {
+    "cases": 900,
+    "correct": 799,
+    "wrong_match": 0,
+    "ambiguous": 70,
+    "broken": 31,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "deleted": {
+    "cases": 0,
+    "correct": 0,
+    "wrong_match": 0,
+    "ambiguous": 0,
+    "broken": 0,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  },
+  "selector_only_present": {
+    "cases": 900,
+    "correct": 687,
+    "wrong_match": 74,
+    "ambiguous": 0,
+    "broken": 139,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 30
+  },
+  "selector_only_deleted": {
+    "cases": 0,
+    "correct": 0,
+    "wrong_match": 0,
+    "ambiguous": 0,
+    "broken": 0,
+    "unlocated": 0,
+    "wrong_caught_by_identity": 0
+  }
+}
