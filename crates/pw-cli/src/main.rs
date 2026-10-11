@@ -81,9 +81,13 @@ enum Cmd {
         #[arg(long = "snapshot", value_parser = parse_pair)]
         snapshots: Vec<(String, PathBuf)>,
         /// Copy the other branch's new patches into this project. Refused when there are hard conflicts.
-        /// Copied patches keep their status, but they need approval in this log before a protected release.
+        /// With --with-audit, approvals of the same content carry over too.
         #[arg(long)]
         write: bool,
+        /// The other branch's audit folder. With --write, its approvals for unchanged content carry over into this
+        /// log, each recorded with where it came from. Refused when that log does not verify.
+        #[arg(long = "with-audit", value_name = "DIR")]
+        with_audit: Option<PathBuf>,
     },
     /// Publish patches to a channel. Protected channels (production by default) need approved patches and a
     /// passing verification of the same content
@@ -480,7 +484,14 @@ fn cmd_check(project: &Project, actor: &str, pairs: &[(String, PathBuf)], write:
 /// Compare this project's patches with another branch's. Hard conflicts are reported and block a write.
 /// With `write`, the other branch's new patches are copied in. A patch with the same id and different
 /// content is a conflict, because one branch would silently replace the other's patch.
-fn cmd_merge(project: &Project, actor: &str, with: &PathBuf, pairs: &[(String, PathBuf)], write: bool) -> Result<bool> {
+fn cmd_merge(
+    project: &Project,
+    actor: &str,
+    with: &PathBuf,
+    pairs: &[(String, PathBuf)],
+    write: bool,
+    with_audit: Option<&std::path::Path>,
+) -> Result<bool> {
     let snaps = project::load_snapshots(pairs)?;
     let mine = project.load_patch_files()?;
     let theirs = project::load_patch_files(with)?;
@@ -488,6 +499,11 @@ fn cmd_merge(project: &Project, actor: &str, with: &PathBuf, pairs: &[(String, P
     let mut all: Vec<_> = mine.iter().map(|(_, p)| p.clone()).filter(|p| !theirs_ids.contains(&p.id)).collect();
     all.extend(theirs.iter().map(|(_, p)| p.clone()));
 
+    // Read and verified before anything is decided: a branch log that does not verify is refused, even for a dry run.
+    let other_events = match with_audit {
+        Some(dir) => Some(verified_events(dir)?),
+        None => None,
+    };
     let mut hard = 0usize;
     let mut added: Vec<(PathBuf, String)> = Vec::new();
     let mut unchanged = Vec::new();
@@ -503,7 +519,14 @@ fn cmd_merge(project: &Project, actor: &str, with: &PathBuf, pairs: &[(String, P
             }
             continue;
         };
-        if mine_patch.sha256()? == theirs_patch.sha256()? {
+        // Same content, whatever the review state: a status change on one branch is not a conflict.
+        if mine_patch.review_digest()? == theirs_patch.review_digest()? {
+            if let Some(events) = &other_events {
+                if let Some(clash) = review_clash(project, mine_patch, events)? {
+                    hard += 1;
+                    println!("CONFLICT review: {clash}");
+                }
+            }
             unchanged.push(theirs_patch.id.clone());
         } else {
             hard += 1;
@@ -547,13 +570,99 @@ fn cmd_merge(project: &Project, actor: &str, with: &PathBuf, pairs: &[(String, P
     } else if write {
         println!("nothing written: resolve the conflicts above first");
     }
+    let carried = match (written, with_audit, other_events.as_deref()) {
+        (true, Some(dir), Some(events)) => carry_approvals(project, actor, dir, &theirs_ids, events)?,
+        _ => Vec::new(),
+    };
     let added_ids: Vec<&str> = added.iter().map(|(_, id)| id.as_str()).collect();
     project.audit().append(
         actor,
         "merge",
-        json!({"with": with.display().to_string(), "written": written, "added": added_ids, "unchanged": unchanged, "hard_conflicts": hard, "warnings": warnings}),
+        json!({"with": with.display().to_string(), "written": written, "added": added_ids, "unchanged": unchanged, "hard_conflicts": hard, "warnings": warnings, "approvals_carried": carried}),
     )?;
     Ok(hard > 0)
+}
+
+/// Carry approvals from another branch's audit log into this one. An approval counts only for the content it was
+/// given for (its review digest), so a patch that changed on either side is not carried. A carried approval is a new
+/// event in this log that names the other log and the event it came from. A rejection of the same content on the
+/// other branch is reported, not carried. A log that does not verify is refused before anything is read from it.
+fn carry_approvals(
+    project: &Project,
+    actor: &str,
+    other_audit: &std::path::Path,
+    theirs_ids: &[String],
+    other_events: &[pw_core::audit::Event],
+) -> Result<Vec<String>> {
+    let local = project.audit();
+    let mut carried = Vec::new();
+    for (path, mut patch) in project.load_patch_files()? {
+        if !theirs_ids.contains(&patch.id) {
+            continue;
+        }
+        let digest = patch.review_digest()?;
+        let Some(latest) = review::latest(other_events, &patch.id) else {
+            continue;
+        };
+        let same_content = latest.data.get("digest").and_then(serde_json::Value::as_str) == Some(digest.as_str());
+        if !same_content {
+            continue;
+        }
+        if latest.kind == review::REJECT {
+            println!("review: `{}` was rejected on the other branch; not carried over", patch.id);
+            continue;
+        }
+        if latest.kind != review::APPROVE || matches!(review::approval(&patch, &local.read_all()?)?, Approval::Approved) {
+            continue;
+        }
+        let reviewer = latest
+            .data
+            .get("reviewer")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(latest.actor.as_str())
+            .to_string();
+        patch.status = ReviewStatus::Approved;
+        patch.reviewer = Some(reviewer.clone());
+        project::write_patch_file(&path, &patch)?;
+        local.append(
+            actor,
+            review::APPROVE,
+            json!({"patch": patch.id, "digest": digest, "reviewer": reviewer, "carried_from": other_audit.display().to_string(), "carried_seq": latest.seq}),
+        )?;
+        println!("approval carried over: `{}` approved by {reviewer} on the other branch (content {digest})", patch.id);
+        carried.push(patch.id.clone());
+    }
+    Ok(carried)
+}
+
+/// The events of another branch's audit log, read only once the log verifies. A log that does not verify is refused.
+fn verified_events(audit: &std::path::Path) -> Result<Vec<pw_core::audit::Event>> {
+    let log = pw_core::audit::AuditLog::open(audit);
+    log.verify()
+        .with_context(|| format!("the audit log in {} does not verify, so nothing is carried", audit.display()))?;
+    Ok(log.read_all()?)
+}
+
+/// A review clash: the same content approved on one branch and rejected on the other. Each side's latest review event
+/// for the patch decides its state. Returns a description when the two sides disagree about one content.
+fn review_clash(project: &Project, patch: &Patch, other: &[pw_core::audit::Event]) -> Result<Option<String>> {
+    let digest = patch.review_digest()?;
+    let local_events = project.audit().read_all()?;
+    let (Some(here), Some(there)) = (review::latest(&local_events, &patch.id), review::latest(other, &patch.id)) else {
+        return Ok(None);
+    };
+    let same_content = |e: &pw_core::audit::Event| e.data.get("digest").and_then(serde_json::Value::as_str) == Some(digest.as_str());
+    let verdict = |e: &pw_core::audit::Event| match e.kind.as_str() {
+        review::APPROVE => Some("approved"),
+        review::REJECT => Some("rejected"),
+        _ => None,
+    };
+    match (verdict(here), verdict(there)) {
+        (Some(a), Some(b)) if a != b && same_content(here) && same_content(there) => {
+            Ok(Some(format!("`{}` is {a} here and {b} on the other branch (content {digest})", patch.id)))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Publish the plan to `channel`. Blockers are listed together, so a dry run shows everything that would stop
@@ -1003,9 +1112,9 @@ async fn main() -> Result<ExitCode> {
                 return Ok(ExitCode::from(2));
             }
         }
-        Cmd::Merge { with, snapshots, write } => {
+        Cmd::Merge { with, snapshots, write, with_audit } => {
             let project = Project::open(&root)?;
-            if cmd_merge(&project, &actor, &with, &snapshots, write)? {
+            if cmd_merge(&project, &actor, &with, &snapshots, write, with_audit.as_deref())? {
                 return Ok(ExitCode::from(1));
             }
         }
