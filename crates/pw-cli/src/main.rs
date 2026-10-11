@@ -349,8 +349,26 @@ enum TrainCmd {
         /// One setting, as accept,margin,review,veto. Without it, the setting in the matcher's selection.json is used
         #[arg(long, value_name = "A,M,R,V")]
         setting: Option<String>,
+        /// Leave out the matcher's learned gate (docs/DESIGN.md, section 6.13). Without this, a gate.json in the matcher
+        /// folder applies.
+        #[arg(long)]
+        no_gate: bool,
         #[arg(long)]
         json: bool,
+    },
+    /// Train the learned gate on the combined tracker from development slices, and write gate.json into the matcher
+    /// folder (docs/DESIGN.md, section 6.13). The rule's setting comes from the matcher's selection.json.
+    Gate {
+        /// The matcher folder, with its selection.json
+        #[arg(long, value_name = "DIR")]
+        matcher: PathBuf,
+        /// Development slices as SEED:mixed or SEED:compound, comma-separated
+        #[arg(long, value_delimiter = ',', required = true)]
+        slices: Vec<String>,
+        #[arg(long, default_value_t = 300)]
+        sites: usize,
+        #[arg(long, default_value_t = 3)]
+        variants: usize,
     },
     /// Run the distributed-training coordinator (workers send deltas, it averages and steps)
     Serve {
@@ -1215,7 +1233,36 @@ async fn main() -> Result<ExitCode> {
                     }
                 }
             },
-            TrainCmd::Track { matcher, slices, sites, variants, grid, setting, json } => {
+            TrainCmd::Gate { matcher, slices, sites, variants } => {
+                let loaded = pw_model::Matcher::load(&matcher).with_context(|| format!("loading the matcher in {}", matcher.display()))?;
+                let selection = pw_model::Selection::load(&matcher)?;
+                selection.check_matcher(&matcher)?;
+                let parsed: Vec<(u64, pw_train::bench::Drift)> = slices.iter().map(|s| parse_slice(s)).collect::<Result<_>>()?;
+                let cfg = pw_core::relocate::Config {
+                    matcher_accept: selection.setting.accept,
+                    matcher_margin: selection.setting.margin,
+                    matcher_review: selection.setting.review,
+                    ..pw_core::relocate::Config::default()
+                };
+                let dev = pw_train::gate::Dev {
+                    slices: parsed,
+                    sites,
+                    variants,
+                    matcher: &loaded,
+                    cfg,
+                    veto: selection.setting.veto,
+                    matcher_sha256: selection.matcher_sha256.clone(),
+                };
+                let gate = pw_train::gate::train(&dev)?;
+                let written = gate.write(&matcher)?;
+                println!("gate written to {}", written.display());
+                for (threshold, total) in &gate.threshold_table {
+                    println!("threshold {threshold:.2}: summed objective {total}");
+                }
+                println!("chosen threshold {:.2}, trained on {}", gate.threshold, gate.trained_on.join(", "));
+                println!("weights {:?}, bias {:.4}", gate.weights, gate.bias);
+            }
+            TrainCmd::Track { matcher, slices, sites, variants, grid, setting, no_gate, json } => {
                 let loaded = pw_model::Matcher::load(&matcher).with_context(|| format!("loading the matcher in {}", matcher.display()))?;
                 let parsed: Vec<(u64, pw_train::bench::Drift)> = slices.iter().map(|s| parse_slice(s)).collect::<Result<_>>()?;
                 let base = pw_core::relocate::Config::default();
@@ -1283,6 +1330,23 @@ async fn main() -> Result<ExitCode> {
                         (sel.setting.accept, sel.setting.margin, sel.setting.review, sel.setting.veto)
                     }
                 };
+                // With a learned gate in the matcher folder, the gate decides which picks apply (docs/DESIGN.md, 6.13).
+                let gate = if no_gate { None } else { pw_model::Gate::load(&matcher)? };
+                if let Some(gate) = &gate {
+                    gate.check_matcher(&matcher)?;
+                    let cfg = pw_core::relocate::Config { matcher_accept: a, matcher_margin: m, matcher_review: r, ..base };
+                    let chooser = pw_model::CombinedChooser { matcher: &loaded, cfg, veto: v, gate: Some(gate) };
+                    for (seed, drift) in &parsed {
+                        let report = pw_train::bench::run_with(sites, variants, *seed, *drift, &chooser, cfg)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&report)?);
+                        } else {
+                            println!("\nseed {seed} {drift:?}, with the learned gate:");
+                            print_bench(&report, "combined + gate");
+                        }
+                    }
+                    return Ok(ExitCode::SUCCESS);
+                }
                 let settings = [(a, m, r, v)];
                 for (seed, drift) in &parsed {
                     let runs = pw_train::bench::run_combined_grid(sites, variants, *seed, *drift, &loaded, base, &settings)?;

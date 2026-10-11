@@ -8,11 +8,13 @@
 //! confident enough (see `ModelChooser::model_accept`). Otherwise the result is `Unsure`, which asks a human.
 
 mod chooser;
+mod gate;
 mod matcher;
 mod model;
 mod selection;
 
 pub use chooser::{alone, decide, Judgement, ModelChooser, ModelFirst};
 pub use matcher::{CombinedChooser, Matcher, MatcherChooser, MatcherOnly};
+pub use gate::{Gate, FEATURES as GATE_FEATURES, GATE_FILE, GATE_SCHEMA, N as GATE_N};
 pub use model::{Generation, Model};
 pub use selection::{Selection, Setting, SELECTION_FILE, SELECTION_SCHEMA};

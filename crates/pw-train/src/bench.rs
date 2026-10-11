@@ -140,12 +140,12 @@ fn record(tally: &mut Tally, gold: Option<u32>, chosen: Option<u32>, abstained: 
 }
 
 /// One held-out case: a site's anchor, and one mutated variant of that site.
-struct Case {
-    anchor: Anchor,
-    snap: Snapshot,
+pub(crate) struct Case {
+    pub(crate) anchor: Anchor,
+    pub(crate) snap: Snapshot,
     /// The element that should be matched. `None` when the target was deleted.
-    gold: Option<u32>,
-    stored_text: String,
+    pub(crate) gold: Option<u32>,
+    pub(crate) stored_text: String,
 }
 
 /// Every case for a seed, in a fixed order. The same seed always gives the same cases.
@@ -157,7 +157,7 @@ pub enum Drift {
     Compound,
 }
 
-fn cases(sites: usize, variants: usize, seed: u64, drift: Drift) -> anyhow::Result<Vec<Case>> {
+pub(crate) fn cases(sites: usize, variants: usize, seed: u64, drift: Drift) -> anyhow::Result<Vec<Case>> {
     let mut rng = Rng::new(seed);
     let mut out = Vec::with_capacity(sites * variants);
     for i in 0..sites {
@@ -199,7 +199,7 @@ fn caught_by_identity(case: &Case, node: Option<u32>) -> bool {
 }
 
 /// The heuristic and selector-only rows for one case.
-fn score_base(report: &mut Report, case: &Case, heuristic: &Outcome) {
+pub(crate) fn score_base(report: &mut Report, case: &Case, heuristic: &Outcome) {
     let selector = selector_only(&case.anchor, &case.snap);
     let chosen = heuristic.element;
     if case.gold.is_some() {
@@ -283,6 +283,17 @@ pub fn run_drift(sites: usize, variants: usize, seed: u64, model: Option<&ModelC
             let first = relocate::relocate(&case.anchor, &case.snap, &ModelFirst { model, fallback: &heuristic }, &cfg)?;
             score_model(rows, &case, &only, &first);
         }
+    }
+    Ok(report)
+}
+
+/// Any chooser over one slice of cases, scored the way the protocol scores every other row. Used for the gated
+/// tracker (docs/DESIGN.md, section 6.13), whose decisions the grid's recorded offers cannot replay.
+pub fn run_with(sites: usize, variants: usize, seed: u64, drift: Drift, chooser: &dyn Chooser, cfg: Config) -> anyhow::Result<Report> {
+    let mut report = Report { sites, variants, ..Report::default() };
+    for case in cases(sites, variants, seed, drift)? {
+        let outcome = relocate::relocate(&case.anchor, &case.snap, chooser, &cfg)?;
+        score_base(&mut report, &case, &outcome);
     }
     Ok(report)
 }

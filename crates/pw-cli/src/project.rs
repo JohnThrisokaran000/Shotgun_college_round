@@ -246,11 +246,18 @@ static MATCHER: std::sync::OnceLock<pw_model::Matcher> = std::sync::OnceLock::ne
 /// The setting the combined tracker uses with that matcher, read from its `selection.json` (section 6.10).
 static SELECTION: std::sync::OnceLock<pw_model::Selection> = std::sync::OnceLock::new();
 
-/// Load the matcher and its selected setting for this process. Refuses a folder that does not load, has no
-/// selection, or was selected for other weights.
+/// The learned gate on the combined tracker's picks, when the matcher's folder has one (docs/DESIGN.md, section 6.13).
+static GATE: std::sync::OnceLock<pw_model::Gate> = std::sync::OnceLock::new();
+
+/// Load the matcher, its selected setting, and its gate if it has one, for this process. Refuses a folder that does
+/// not load, has no selection, or was selected or gated for other weights.
 pub fn install_matcher(dir: &Path) -> Result<pw_model::Selection> {
     let selection = pw_model::Selection::load(dir)?;
     selection.check_matcher(dir)?;
+    if let Some(gate) = pw_model::Gate::load(dir)? {
+        gate.check_matcher(dir)?;
+        let _ = GATE.set(gate);
+    }
     let matcher = pw_model::Matcher::load(dir).with_context(|| format!("loading the matcher in {}", dir.display()))?;
     let _ = MATCHER.set(matcher);
     let _ = SELECTION.set(selection.clone());
@@ -270,7 +277,7 @@ pub fn relocate_one(patch: &Patch, snap: &Snapshot) -> Result<Outcome> {
     if let (Some(matcher), Some(selection)) = (MATCHER.get(), SELECTION.get()) {
         let s = selection.setting;
         let cfg = RelocateConfig { matcher_accept: s.accept, matcher_margin: s.margin, matcher_review: s.review, ..cfg };
-        let chooser = pw_model::CombinedChooser { matcher, cfg, veto: s.veto };
+        let chooser = pw_model::CombinedChooser { matcher, cfg, veto: s.veto, gate: GATE.get() };
         return Ok(relocate::relocate(&patch.anchor, snap, &chooser, &cfg)?);
     }
     let heuristic = Heuristic { cfg };
