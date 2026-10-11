@@ -18,7 +18,7 @@ use anyhow::{bail, Context, Result};
 use pw_core::anchor::Anchor;
 use pw_core::audit::AuditLog;
 use pw_core::conflict::{self, Conflict, Target};
-use pw_core::patch::Patch;
+use pw_core::patch::{Patch, Status as ReviewStatus};
 use pw_core::relocate::{self, Config as RelocateConfig, Heuristic, Outcome, Status};
 use pw_core::release::{self, BeaconPolicy, Manifest};
 use pw_core::snapshot::{Rect, Snapshot};
@@ -31,6 +31,38 @@ pub struct Config {
     pub beacon_window_ms: u64,
     pub beacon_min_errors: usize,
     pub beacon_min_sessions: usize,
+    /// Channels that publish only approved patches, and only with a passing verification.
+    #[serde(default = "default_protected")]
+    pub protected_channels: Vec<String>,
+    /// What visual checks compare against: the channel users see now.
+    #[serde(default = "default_baseline")]
+    pub baseline_channel: String,
+    /// Share of pixels that may differ outside the patched elements before a visual check fails. Exact by default:
+    /// raise it for pages with animation or ads, and say why in the project's notes.
+    #[serde(default = "default_tolerance")]
+    pub visual_tolerance: f64,
+}
+
+fn default_protected() -> Vec<String> {
+    vec!["production".into()]
+}
+
+fn default_baseline() -> String {
+    "production".into()
+}
+
+fn default_tolerance() -> f64 {
+    0.0
+}
+
+/// The name in the audit trail. A flag or `PW_ACTOR` wins, then the login name. It is declared, not checked.
+pub fn resolve_actor(flag: Option<&str>) -> String {
+    flag.map(str::to_string)
+        .or_else(|| std::env::var("PW_ACTOR").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("USER").ok().filter(|u| !u.is_empty()))
+        .unwrap_or_else(|| "unknown".into())
 }
 
 pub struct Project {
@@ -55,6 +87,9 @@ impl Project {
             beacon_window_ms: 60_000,
             beacon_min_errors: 5,
             beacon_min_sessions: 3,
+            protected_channels: default_protected(),
+            baseline_channel: default_baseline(),
+            visual_tolerance: default_tolerance(),
         };
         fs::write(&cfg_path, toml::to_string_pretty(&config)?)?;
         for dir in ["patches", "releases", "channels", "audit", "snapshots"] {
@@ -87,9 +122,26 @@ impl Project {
         self.root.join("patches")
     }
 
+    /// Protected channels publish only approved patches, with a passing verification (see `gate`).
+    pub fn is_protected(&self, channel: &str) -> bool {
+        self.config.protected_channels.iter().any(|c| c == channel)
+    }
+
     /// Every patch in `patches/`, validated. One bad file stops the load and names the file.
     pub fn load_patches(&self) -> Result<Vec<Patch>> {
         load_patch_dir(&self.patches_dir())
+    }
+
+    /// Every patch with the file it came from, so a change is written back to that file.
+    pub fn load_patch_files(&self) -> Result<Vec<(PathBuf, Patch)>> {
+        load_patch_files(&self.patches_dir())
+    }
+
+    pub fn find_patch(&self, id: &str) -> Result<(PathBuf, Patch)> {
+        self.load_patch_files()?
+            .into_iter()
+            .find(|(_, p)| p.id == id)
+            .with_context(|| format!("no patch `{id}` in {}", self.patches_dir().display()))
     }
 
     pub fn save_patch(&self, patch: &Patch) -> Result<PathBuf> {
@@ -101,14 +153,17 @@ impl Project {
         fs::write(&path, patch.to_yaml()?)?;
         Ok(path)
     }
+}
 
-    pub fn overwrite_patch(&self, patch: &Patch) -> Result<()> {
-        fs::write(self.patches_dir().join(format!("{}.yaml", patch.id)), patch.to_yaml()?)?;
-        Ok(())
-    }
+pub fn write_patch_file(path: &Path, patch: &Patch) -> Result<()> {
+    fs::write(path, patch.to_yaml()?).with_context(|| format!("writing {}", path.display()))
 }
 
 pub fn load_patch_dir(dir: &Path) -> Result<Vec<Patch>> {
+    Ok(load_patch_files(dir)?.into_iter().map(|(_, patch)| patch).collect())
+}
+
+pub fn load_patch_files(dir: &Path) -> Result<Vec<(PathBuf, Patch)>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -118,8 +173,11 @@ pub fn load_patch_dir(dir: &Path) -> Result<Vec<Patch>> {
         .collect();
     paths.sort();
     paths
-        .iter()
-        .map(|p| Patch::read(p).with_context(|| format!("invalid patch {}", p.display())))
+        .into_iter()
+        .map(|p| {
+            let patch = Patch::read(&p).with_context(|| format!("invalid patch {}", p.display()))?;
+            Ok((p, patch))
+        })
         .collect()
 }
 
@@ -225,6 +283,8 @@ pub struct ReleasePlan {
     pub relocated: Vec<String>,
     pub refused: Vec<(String, String)>,
     pub conflicts: Vec<Conflict>,
+    /// Rejected patches. They stay in the project, but they are not part of any release.
+    pub withdrawn: Vec<String>,
 }
 
 impl ReleasePlan {
@@ -243,9 +303,14 @@ pub fn plan_release(project: &Project, channel: &str, snapshots: &BTreeMap<Strin
     let mut refused = Vec::new();
     let mut relocated = Vec::new();
     let mut rebased: Vec<Patch> = Vec::new();
+    let mut withdrawn = Vec::new();
     let mut targets_by_page: BTreeMap<String, Vec<Target>> = BTreeMap::new();
 
     for patch in &patches {
+        if patch.status == ReviewStatus::Rejected {
+            withdrawn.push(patch.id.clone());
+            continue;
+        }
         let Some(snap) = snapshots.get(&patch.page) else {
             refused.push((patch.id.clone(), format!("no snapshot for {} (pass --snapshot {}=FILE)", patch.page, patch.page)));
             continue;
@@ -283,9 +348,12 @@ pub fn plan_release(project: &Project, channel: &str, snapshots: &BTreeMap<Strin
         }
     }
 
+    if rebased.is_empty() && refused.is_empty() {
+        bail!("no patches to release: every patch is rejected");
+    }
     let parent = release::current(&project.root, channel)?;
     let manifest = Manifest::build(channel, parent, now_ms(), &rebased)?;
-    Ok(ReleasePlan { manifest, relocated, refused, conflicts })
+    Ok(ReleasePlan { manifest, relocated, refused, conflicts, withdrawn })
 }
 
 pub fn release_targets(patches: &[Patch], snap: &Snapshot, page: &str) -> Vec<Target> {
