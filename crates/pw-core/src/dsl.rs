@@ -164,7 +164,7 @@ pub fn normalize(patch: &mut Patch) -> Result<()> {
 
     for assertion in &patch.assertions {
         match assertion {
-            Assertion::TextContains(text) => check_len(patch, text, MAX_SHORT_CHARS, "assertion text")?,
+            Assertion::TextContains(text) | Assertion::ClickShowsText(text) => check_len(patch, text, MAX_SHORT_CHARS, "assertion text")?,
             Assertion::ClickNavigatesTo(path) => check_local_path(patch, path)?,
             Assertion::AttrEquals { name, value } => {
                 if !valid_attr_name(name) {
@@ -202,6 +202,8 @@ mod tests {
                 fingerprint: Fingerprint { tag: "button".into(), ..Default::default() },
             },
             ops,
+            status: Default::default(),
+            reviewer: None,
             assertions: vec![],
         }
     }

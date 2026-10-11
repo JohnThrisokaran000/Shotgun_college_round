@@ -22,6 +22,39 @@ pub struct Patch {
     pub ops: Vec<Op>,
     #[serde(default, rename = "assert", skip_serializing_if = "Vec::is_empty")]
     pub assertions: Vec<Assertion>,
+    /// Review state. A file without a status is a draft, and drafts are not written out.
+    #[serde(default, skip_serializing_if = "Status::is_draft")]
+    pub status: Status,
+    /// Who approved the patch. Set by `pw review approve`, and absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<String>,
+}
+
+/// Review state of a patch. The file records the state. Who set it, and for which content, is in
+/// the audit log (see `review`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    #[default]
+    Draft,
+    Proposed,
+    Approved,
+    Rejected,
+}
+
+impl Status {
+    pub fn is_draft(&self) -> bool {
+        *self == Status::Draft
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Status::Draft => "draft",
+            Status::Proposed => "proposed",
+            Status::Approved => "approved",
+            Status::Rejected => "rejected",
+        }
+    }
 }
 
 /// The whole DSL. Anything not listed here is rejected at parse time.
@@ -76,6 +109,8 @@ pub enum Assertion {
     Exists(bool),
     TextContains(String),
     ClickNavigatesTo(String),
+    /// Click the element, then the page must show this text (for example after a cart update).
+    ClickShowsText(String),
     AttrEquals { name: String, value: String },
 }
 
@@ -92,6 +127,7 @@ enum AssertionRepr {
     Exists { exists: bool },
     TextContains { #[serde(rename = "textContains")] text_contains: String },
     ClickNavigatesTo { #[serde(rename = "clickNavigatesTo")] click_navigates_to: String },
+    ClickShowsText { #[serde(rename = "clickShowsText")] click_shows_text: String },
     AttrEquals { #[serde(rename = "attrEquals")] attr_equals: AttrPair },
 }
 
@@ -102,6 +138,7 @@ impl From<AssertionRepr> for Assertion {
             AssertionRepr::Exists { exists } => Assertion::Exists(exists),
             AssertionRepr::TextContains { text_contains } => Assertion::TextContains(text_contains),
             AssertionRepr::ClickNavigatesTo { click_navigates_to } => Assertion::ClickNavigatesTo(click_navigates_to),
+            AssertionRepr::ClickShowsText { click_shows_text } => Assertion::ClickShowsText(click_shows_text),
             AssertionRepr::AttrEquals { attr_equals } => Assertion::AttrEquals { name: attr_equals.name, value: attr_equals.value },
         }
     }
@@ -114,6 +151,7 @@ impl From<Assertion> for AssertionRepr {
             Assertion::Exists(exists) => AssertionRepr::Exists { exists },
             Assertion::TextContains(text_contains) => AssertionRepr::TextContains { text_contains },
             Assertion::ClickNavigatesTo(click_navigates_to) => AssertionRepr::ClickNavigatesTo { click_navigates_to },
+            Assertion::ClickShowsText(click_shows_text) => AssertionRepr::ClickShowsText { click_shows_text },
             Assertion::AttrEquals { name, value } => AssertionRepr::AttrEquals { attr_equals: AttrPair { name, value } },
         }
     }
@@ -144,6 +182,15 @@ impl Patch {
     pub fn sha256(&self) -> Result<String> {
         let text = self.to_yaml()?;
         Ok(hex::encode(Sha256::digest(text.as_bytes())))
+    }
+
+    /// Hash of the patch's content with its review state removed. An approval is recorded against this
+    /// digest, so changing the patch after it was approved makes the approval stop counting.
+    pub fn review_digest(&self) -> Result<String> {
+        let mut content = self.clone();
+        content.status = Status::Draft;
+        content.reviewer = None;
+        content.sha256()
     }
 }
 
@@ -215,8 +262,42 @@ assert:
     }
 
     #[test]
+    fn click_shows_text_round_trips_as_a_yaml_assertion() {
+        let text = GOOD.replace("  - { clickNavigatesTo: \"/order/confirm\" }", "  - { clickShowsText: \"Added to cart\" }");
+        let p = Patch::from_yaml(&text).unwrap();
+        assert!(p.assertions.contains(&Assertion::ClickShowsText("Added to cart".into())));
+        assert!(p.to_yaml().unwrap().contains("clickShowsText"));
+        assert_eq!(Patch::from_yaml(&p.to_yaml().unwrap()).unwrap(), p);
+    }
+
+    #[test]
     fn unknown_op_is_rejected() {
         let text = GOOD.replace("op: setStyle", "op: teleport");
         assert!(Patch::from_yaml(&text).is_err());
+    }
+
+    #[test]
+    fn a_draft_is_not_written_out_and_review_state_round_trips() {
+        let mut p = Patch::from_yaml(GOOD).unwrap();
+        assert_eq!(p.status, Status::Draft);
+        assert!(!p.to_yaml().unwrap().contains("status:"), "drafts keep the old file format");
+        p.status = Status::Approved;
+        p.reviewer = Some("dev-b".into());
+        let text = p.to_yaml().unwrap();
+        assert!(text.contains("status: approved") && text.contains("reviewer: dev-b"), "{text}");
+        assert_eq!(Patch::from_yaml(&text).unwrap(), p);
+    }
+
+    #[test]
+    fn review_digest_ignores_review_state_but_not_content() {
+        let draft = Patch::from_yaml(GOOD).unwrap();
+        let mut approved = draft.clone();
+        approved.status = Status::Approved;
+        approved.reviewer = Some("dev-b".into());
+        assert_ne!(draft.sha256().unwrap(), approved.sha256().unwrap(), "the file changes when it is approved");
+        assert_eq!(draft.review_digest().unwrap(), approved.review_digest().unwrap());
+        let mut edited = approved.clone();
+        edited.ops.push(Op::Hide {});
+        assert_ne!(edited.review_digest().unwrap(), approved.review_digest().unwrap());
     }
 }

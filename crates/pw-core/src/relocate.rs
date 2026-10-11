@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::anchor::{Anchor, Fingerprint};
 use crate::error::{PwError, Result};
-use crate::similarity;
+use crate::similarity::{self, Weights};
 use crate::snapshot::{Element, Snapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -47,11 +47,22 @@ pub struct Config {
     pub fast_threshold: f64,
     pub prefilter_k: usize,
     pub floor: f64,
+    /// Below `floor` but at least this similar, the top candidate is still shown to a person (ambiguous), not
+    /// reported as gone (broken). Nothing is applied from it, so this only changes the label.
+    pub review_floor: f64,
     pub heuristic_accept: f64,
     pub heuristic_margin: f64,
     /// The heuristic also needs this much of the stored surroundings to still match.
     pub context_min: f64,
     pub model_accept: f64,
+    /// The matcher model (pw-model) applies its top candidate only at or above this score...
+    pub matcher_accept: f64,
+    /// ...and only when it leads the second candidate by at least this much...
+    pub matcher_margin: f64,
+    /// ...and asks a person when its top candidate reaches this score but not `matcher_accept`.
+    pub matcher_review: f64,
+    /// Feature weights of the similarity score that the fast path and the prefilter use.
+    pub weights: Weights,
 }
 
 impl Default for Config {
@@ -60,11 +71,19 @@ impl Default for Config {
             fast_threshold: 0.9,
             prefilter_k: 8,
             floor: 0.5,
+            // Chosen on the development split (seed 101): the highest value that keeps present targets reported broken
+            // under 1% (docs/DESIGN.md, section 6.6).
+            review_floor: 0.45,
             heuristic_accept: 0.6,
             heuristic_margin: 0.15,
             context_min: 0.5,
             // Chosen on a development split (docs/DESIGN.md, section 6.5). 0.8 mis-matched 84% of deleted targets there.
             model_accept: 0.99,
+            // Placeholders until the matcher is tuned on the development split (docs/DESIGN.md, section 6.7).
+            matcher_accept: 0.5,
+            matcher_margin: 0.2,
+            matcher_review: 0.2,
+            weights: Weights::default(),
         }
     }
 }
@@ -83,6 +102,53 @@ pub trait Chooser {
     fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<Choice>;
 }
 
+impl Config {
+    /// Set one setting by name, for `pw train bench --set` and the tuning scripts.
+    pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        let number = || value.parse::<f64>().map_err(|_| PwError::Other(format!("{key}: '{value}' is not a number")));
+        match key {
+            "fast_threshold" => self.fast_threshold = number()?,
+            "prefilter_k" => {
+                self.prefilter_k = value
+                    .parse()
+                    .map_err(|_| PwError::Other(format!("{key}: '{value}' is not a whole number")))?
+            }
+            "floor" => self.floor = number()?,
+            "review_floor" => self.review_floor = number()?,
+            "heuristic_accept" => self.heuristic_accept = number()?,
+            "heuristic_margin" => self.heuristic_margin = number()?,
+            "context_min" => self.context_min = number()?,
+            "model_accept" => self.model_accept = number()?,
+            "matcher_accept" => self.matcher_accept = number()?,
+            "matcher_margin" => self.matcher_margin = number()?,
+            "matcher_review" => self.matcher_review = number()?,
+            "w_tag" => self.weights.tag = number()?,
+            "w_id" => self.weights.id = number()?,
+            "w_name" => self.weights.name = number()?,
+            "w_class" => self.weights.class = number()?,
+            "w_text" => self.weights.text = number()?,
+            "w_attrs" => self.weights.attrs = number()?,
+            "w_xpath" => self.weights.xpath = number()?,
+            "w_ancestors" => self.weights.ancestors = number()?,
+            "w_neighbors" => self.weights.neighbors = number()?,
+            "w_rect" => self.weights.rect = number()?,
+            _ => return Err(PwError::Other(format!("unknown relocation setting '{key}'"))),
+        }
+        Ok(())
+    }
+
+    /// Apply a comma-separated list of `key=value` settings, such as `floor=0.4,heuristic_margin=0.1`.
+    pub fn apply(&mut self, spec: &str) -> Result<()> {
+        for pair in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| PwError::Other(format!("'{pair}' is not key=value")))?;
+            self.set(key.trim(), value.trim())?;
+        }
+        Ok(())
+    }
+}
+
 /// Deterministic chooser: accepts the top candidate only when it is strong and clearly ahead.
 pub struct Heuristic {
     pub cfg: Config,
@@ -94,7 +160,8 @@ impl Chooser for Heuristic {
             return Ok(Choice::Null);
         };
         if top < self.cfg.floor {
-            return Ok(Choice::Null);
+            // Too weak to apply, but a person should see a plausible candidate rather than be told the element is gone.
+            return Ok(if top >= self.cfg.review_floor { Choice::Unsure } else { Choice::Null });
         }
         let second = candidates.get(1).map_or(0.0, |c| c.1);
         // Tag, text and class can all survive a look-alike elsewhere on the page.
@@ -105,6 +172,40 @@ impl Chooser for Heuristic {
         } else {
             Ok(Choice::Unsure)
         }
+    }
+}
+
+/// The matcher's decision from its scores for the candidates, given in the order the candidates were given.
+/// `pw_model::MatcherChooser` and the threshold sweep both use this, so they cannot disagree.
+pub fn matcher_choice(scores: &[f64], cfg: &Config) -> Choice {
+    let Some((best, top)) = scores.iter().copied().enumerate().max_by(|a, b| a.1.total_cmp(&b.1)) else {
+        return Choice::Null;
+    };
+    let second = scores.iter().enumerate().filter(|(i, _)| *i != best).map(|(_, s)| *s).fold(0.0_f64, f64::max);
+    if top >= cfg.matcher_accept && top - second >= cfg.matcher_margin {
+        Choice::Pick { index: best, confidence: top }
+    } else if top >= cfg.matcher_review {
+        Choice::Unsure
+    } else {
+        Choice::Null
+    }
+}
+
+/// The combined tracker (docs/DESIGN.md, section 6.10). The heuristic decides when it picks a candidate, unless the
+/// matcher's probability for that pick is below `veto` (0 turns the veto off), in which case a person decides. The
+/// matcher decides when the heuristic is unsure. When the heuristic finds nothing, nothing is applied.
+pub fn combined_choice(heuristic: Choice, scores: &[f64], cfg: &Config, veto: f64) -> Choice {
+    match heuristic {
+        Choice::Pick { index, confidence } => {
+            let doubted = veto > 0.0 && scores.get(index).is_some_and(|s| *s < veto);
+            if doubted {
+                Choice::Unsure
+            } else {
+                Choice::Pick { index, confidence }
+            }
+        }
+        Choice::Unsure => matcher_choice(scores, cfg),
+        Choice::Null => Choice::Null,
     }
 }
 
@@ -150,7 +251,7 @@ pub fn fast_path(anchor: &Anchor, snap: &Snapshot, cfg: &Config) -> Result<Optio
             continue;
         }
         if let Some(el) = snap.element(candidate) {
-            if similarity::score(anchor, el) >= cfg.fast_threshold {
+            if similarity::score_with(anchor, el, &cfg.weights) >= cfg.fast_threshold {
                 return Ok(Some(candidate));
             }
         }
@@ -164,7 +265,7 @@ pub fn prefilter<'a>(anchor: &Anchor, snap: &'a Snapshot, cfg: &Config) -> Vec<(
         .elements()
         .iter()
         .filter(|el| compatible(&anchor.fingerprint.tag, el))
-        .map(|el| (el, similarity::score(anchor, el)))
+        .map(|el| (el, similarity::score_with(anchor, el, &cfg.weights)))
         .filter(|(_, s)| *s > 0.0)
         .collect();
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal).then(a.0.index.cmp(&b.0.index)));
@@ -344,5 +445,63 @@ mod tests {
     fn anchor_without_locators_is_rejected() {
         let anchor = Anchor { locators: Default::default(), fingerprint: Fingerprint { tag: "button".into(), ..Default::default() } };
         assert!(relocate(&anchor, &Snapshot::parse(V1), &heuristic(), &Config::default()).is_err());
+    }
+
+    #[test]
+    fn the_combined_rule_defers_to_the_heuristic_and_asks_the_matcher_when_unsure() {
+        let cfg = Config { matcher_accept: 0.6, matcher_margin: 0.2, matcher_review: 0.3, ..Config::default() };
+        let pick = Choice::Pick { index: 1, confidence: 0.8 };
+        // A heuristic pick stands when the matcher agrees, or when the veto is off.
+        assert!(matches!(combined_choice(pick, &[0.1, 0.9], &cfg, 0.0), Choice::Pick { index: 1, .. }));
+        assert!(matches!(combined_choice(pick, &[0.1, 0.9], &cfg, 0.5), Choice::Pick { index: 1, .. }));
+        // The veto turns a pick the matcher doubts into a person's decision.
+        assert!(matches!(combined_choice(pick, &[0.9, 0.2], &cfg, 0.5), Choice::Unsure));
+        // An unsure heuristic leaves the decision to the matcher's own thresholds.
+        assert!(matches!(combined_choice(Choice::Unsure, &[0.2, 0.95], &cfg, 0.0), Choice::Pick { index: 1, .. }));
+        assert!(matches!(combined_choice(Choice::Unsure, &[0.1, 0.05], &cfg, 0.0), Choice::Null));
+        // A heuristic that found nothing is not overruled.
+        assert!(matches!(combined_choice(Choice::Null, &[0.99], &cfg, 0.0), Choice::Null));
+    }
+
+    #[test]
+    fn the_matcher_applies_only_a_confident_clear_leader() {
+        let cfg = Config { matcher_accept: 0.6, matcher_margin: 0.2, matcher_review: 0.3, ..Config::default() };
+        assert!(matches!(matcher_choice(&[0.9, 0.2], &cfg), Choice::Pick { index: 0, .. }));
+        // The leader is confident but not clearly ahead of its rival: a person decides.
+        assert!(matches!(matcher_choice(&[0.9, 0.8], &cfg), Choice::Unsure));
+        // Plausible, below the accept bar: a person decides.
+        assert!(matches!(matcher_choice(&[0.4, 0.1], &cfg), Choice::Unsure));
+        // Nothing plausible: broken.
+        assert!(matches!(matcher_choice(&[0.1, 0.05], &cfg), Choice::Null));
+        assert!(matches!(matcher_choice(&[], &cfg), Choice::Null));
+        // A pick reports the index of the leader in the given order.
+        assert!(matches!(matcher_choice(&[0.2, 0.95], &cfg), Choice::Pick { index: 1, .. }));
+    }
+
+    #[test]
+    fn a_plausible_but_weak_candidate_goes_to_a_person_not_to_broken() {
+        let snap = Snapshot::parse("<html><body><button>Buy</button></body></html>");
+        let el = snap.elements().iter().find(|e| e.tag == "button").unwrap();
+        let fp = Fingerprint::default();
+        let heuristic = Heuristic { cfg: Config::default() };
+        // The band is [review_floor, floor) = [0.45, 0.5) with the defaults.
+        assert!(matches!(heuristic.choose(&fp, &[(el, 0.47)]).unwrap(), Choice::Unsure), "0.47 is a plausible candidate");
+        assert!(matches!(heuristic.choose(&fp, &[(el, 0.1)]).unwrap(), Choice::Null), "0.1 is not");
+        let strict = Heuristic { cfg: Config { review_floor: 0.5, ..Config::default() } };
+        assert!(matches!(strict.choose(&fp, &[(el, 0.47)]).unwrap(), Choice::Null), "with review_floor = floor, nothing is ambiguous");
+    }
+
+    #[test]
+    fn settings_change_by_name_and_unknown_names_are_refused() {
+        let mut cfg = Config::default();
+        cfg.apply("floor=0.4, heuristic_margin=0.1,prefilter_k=12").unwrap();
+        assert_eq!((cfg.floor, cfg.heuristic_margin, cfg.prefilter_k), (0.4, 0.1, 12));
+        assert!(cfg.apply("flor=0.4").is_err(), "a misspelt name must not be ignored");
+        assert!(cfg.apply("floor").is_err());
+        assert!(cfg.apply("floor=abc").is_err());
+        assert!(cfg.apply("prefilter_k=2.5").is_err());
+        cfg.apply("w_tag=0.5,w_rect=0").unwrap();
+        assert_eq!((cfg.weights.tag, cfg.weights.rect), (0.5, 0.0));
+        assert_eq!(Config::default().weights, Weights::default(), "the default weights are the original constants");
     }
 }
