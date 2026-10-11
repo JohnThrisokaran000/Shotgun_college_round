@@ -8,7 +8,9 @@
 //! confident enough (see `ModelChooser::model_accept`). Otherwise the result is `Unsure`, which asks a human.
 
 mod chooser;
+mod matcher;
 mod model;
 
 pub use chooser::{alone, decide, Judgement, ModelChooser, ModelFirst};
+pub use matcher::{Matcher, MatcherChooser};
 pub use model::{Generation, Model};

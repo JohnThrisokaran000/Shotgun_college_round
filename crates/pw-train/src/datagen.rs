@@ -241,6 +241,8 @@ fn author_example(rng: &mut Rng, site: &str, split: &str, snap: &Snapshot) -> Re
         anchor: Anchor::from_element(el, snap),
         ops: req.ops.clone(),
         assertions: vec![],
+        status: Default::default(),
+        reviewer: None,
     };
     if dsl::normalize(&mut patch).is_err() {
         return Ok(None);
@@ -364,6 +366,8 @@ pub fn check(examples: &[Example]) -> Result<()> {
                     },
                     ops,
                     assertions: vec![],
+                    status: Default::default(),
+                    reviewer: None,
                 };
                 dsl::normalize(&mut p)?;
             }

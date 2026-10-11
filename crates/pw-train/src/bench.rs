@@ -149,26 +149,43 @@ struct Case {
 }
 
 /// Every case for a seed, in a fixed order. The same seed always gives the same cases.
-fn cases(sites: usize, variants: usize, seed: u64) -> anyhow::Result<Vec<Case>> {
+/// How each target's variants are made. `Mixed` is the protocol's default (1 to 3 random mutations). `Compound`
+/// is the drift a site change can cause to one target at once: id dropped, text changed, element moved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum Drift {
+    Mixed,
+    Compound,
+}
+
+fn cases(sites: usize, variants: usize, seed: u64, drift: Drift) -> anyhow::Result<Vec<Case>> {
     let mut rng = Rng::new(seed);
     let mut out = Vec::with_capacity(sites * variants);
     for i in 0..sites {
         let kind = SiteKind::ALL[i % SiteKind::ALL.len()];
         let base = synth::make_site(&mut rng, kind);
-        let snap_v1 = Snapshot::parse(&format!("<!doctype html>{}", base.render()));
-        let gold_v1 = snap_v1
+        let base_html = format!("<!doctype html>{}", base.render());
+        // The marker finds the answer. Relocation never sees it: the anchor would keep it and match it for free.
+        let gold_v1 = Snapshot::parse(&base_html)
             .elements()
             .iter()
             .find(|e| e.attrs.contains_key("data-pwgold"))
             .map(|e| e.index)
             .ok_or_else(|| anyhow::anyhow!("base page has no gold element"))?;
+        let snap_v1 = Snapshot::parse(&synth::strip_gold(&base_html));
         let anchor = Anchor::from_element(snap_v1.element(gold_v1).unwrap(), &snap_v1);
         // The identity check is what a patch-level `textContains` assertion would test.
         let stored_text = anchor.fingerprint.text.clone().unwrap_or_default();
         for _ in 0..variants {
-            let variant = synth::variant(&mut rng, &base);
-            let snap = Snapshot::parse(&variant.html);
-            let gold = snap.elements().iter().find(|e| e.attrs.contains_key("data-pwgold")).map(|e| e.index);
+            let variant = match drift {
+                Drift::Mixed => synth::variant(&mut rng, &base),
+                Drift::Compound => synth::compound_variant(&mut rng, &base),
+            };
+            let gold = Snapshot::parse(&variant.html)
+                .elements()
+                .iter()
+                .find(|e| e.attrs.contains_key("data-pwgold"))
+                .map(|e| e.index);
+            let snap = Snapshot::parse(&synth::strip_gold(&variant.html));
             out.push(Case { anchor: anchor.clone(), snap, gold, stored_text: stored_text.clone() });
         }
     }
@@ -243,13 +260,22 @@ pub fn run(sites: usize, variants: usize, seed: u64) -> anyhow::Result<Report> {
 /// As [`run`], and also the trained model when one is given. The model sees exactly the variants the
 /// heuristic sees, so the rows are directly comparable.
 pub fn run_with_model(sites: usize, variants: usize, seed: u64, model: Option<&ModelChooser>) -> anyhow::Result<Report> {
-    let cfg = Config::default();
+    run_configured(sites, variants, seed, model, Config::default())
+}
+
+/// As [`run_with_model`], with the relocation settings given. The tuning scripts use this to change one setting at a time.
+pub fn run_configured(sites: usize, variants: usize, seed: u64, model: Option<&ModelChooser>, cfg: Config) -> anyhow::Result<Report> {
+    run_drift(sites, variants, seed, model, cfg, Drift::Mixed)
+}
+
+/// As [`run_configured`], with the kind of drift given.
+pub fn run_drift(sites: usize, variants: usize, seed: u64, model: Option<&ModelChooser>, cfg: Config, drift: Drift) -> anyhow::Result<Report> {
     let heuristic = Heuristic { cfg };
     let mut report = Report { sites, variants, ..Report::default() };
     if model.is_some() {
         report.model = Some(ModelRows::default());
     }
-    for case in cases(sites, variants, seed)? {
+    for case in cases(sites, variants, seed, drift)? {
         let outcome = relocate::relocate(&case.anchor, &case.snap, &heuristic, &cfg)?;
         score_base(&mut report, &case, &outcome);
         if let (Some(model), Some(rows)) = (model, report.model.as_mut()) {
@@ -261,15 +287,206 @@ pub fn run_with_model(sites: usize, variants: usize, seed: u64, model: Option<&M
     Ok(report)
 }
 
+/// The protocol's objective: correct present matches, minus five times the wrong ones (present and deleted).
+pub fn objective(r: &Report) -> i64 {
+    r.present.correct as i64 - 5 * (r.present.wrong_match as i64 + r.deleted.wrong_match as i64)
+}
+
+/// The matcher's thresholds (accept, margin, review) tried on the development split. Fixed in code before any
+/// test seed was run, so the choice cannot be tuned against the test seeds (docs/DESIGN.md, section 6.7).
+pub fn matcher_grid() -> Vec<(f64, f64, f64)> {
+    let mut grid = Vec::new();
+    for accept in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] {
+        for margin in [0.0, 0.1, 0.2, 0.3, 0.4] {
+            for review in [0.1, 0.2, 0.3, 0.4] {
+                grid.push((accept, margin, review));
+            }
+        }
+    }
+    grid
+}
+
+/// The index of the chosen setting: the highest objective, then the most correct present matches, then the least
+/// work for a person (ambiguous results). Ties after that go to the earlier setting in the grid.
+pub fn select_setting(runs: &[(Config, Report)]) -> Option<usize> {
+    runs.iter()
+        .enumerate()
+        .max_by_key(|(i, (_, r))| {
+            let human = r.present.ambiguous as i64 + r.deleted.ambiguous as i64;
+            (objective(r), r.present.correct as i64, -human, -(*i as i64))
+        })
+        .map(|(i, _)| i)
+}
+
+/// Records the matcher's score for every candidate of one case, and passes the choice through unchanged.
+struct ScoreRecorder<'a> {
+    matcher: &'a pw_model::Matcher,
+    cfg: Config,
+    seen: RefCell<Option<Vec<f64>>>,
+}
+
+impl Chooser for ScoreRecorder<'_> {
+    fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> PwResult<Choice> {
+        let anchor = pw_core::describe::fingerprint_text(fp);
+        let mut scores = Vec::with_capacity(candidates.len());
+        for (el, _) in candidates {
+            scores.push(self.matcher.score(&anchor, &pw_core::describe::element_text(el))?);
+        }
+        let choice = relocate::matcher_choice(&scores, &self.cfg);
+        *self.seen.borrow_mut() = Some(scores);
+        Ok(choice)
+    }
+}
+
+/// Applies recorded matcher scores under one setting of the thresholds.
+struct ScoreReplay {
+    scores: Option<Vec<f64>>,
+    cfg: Config,
+}
+
+impl Chooser for ScoreReplay {
+    fn choose(&self, _: &Fingerprint, _: &[(&Element, f64)]) -> PwResult<Choice> {
+        Ok(match &self.scores {
+            Some(scores) => relocate::matcher_choice(scores, &self.cfg),
+            None => Choice::Null,
+        })
+    }
+}
+
+/// The matcher under several threshold settings, on the same cases. Each candidate is scored once, and every
+/// setting is then replayed on those scores. The settings only change the decision, never the candidates.
+pub fn run_matcher_grid(
+    sites: usize,
+    variants: usize,
+    seed: u64,
+    drift: Drift,
+    matcher: &pw_model::Matcher,
+    base: Config,
+    grid: &[(f64, f64, f64)],
+) -> anyhow::Result<Vec<(Config, Report)>> {
+    let all = cases(sites, variants, seed, drift)?;
+    let recorder = ScoreRecorder { matcher, cfg: base, seen: RefCell::new(None) };
+    let mut scored: Vec<Option<Vec<f64>>> = Vec::with_capacity(all.len());
+    for case in &all {
+        relocate::relocate(&case.anchor, &case.snap, &recorder, &base)?;
+        scored.push(recorder.seen.borrow_mut().take());
+    }
+    let mut out = Vec::with_capacity(grid.len());
+    for &(accept, margin, review) in grid {
+        let cfg = Config { matcher_accept: accept, matcher_margin: margin, matcher_review: review, ..base };
+        let mut report = Report { sites, variants, ..Report::default() };
+        for (case, scores) in all.iter().zip(&scored) {
+            let replay = ScoreReplay { scores: scores.clone(), cfg };
+            let outcome = relocate::relocate(&case.anchor, &case.snap, &replay, &cfg)?;
+            score_base(&mut report, case, &outcome);
+        }
+        out.push((cfg, report));
+    }
+    Ok(out)
+}
+
+/// The combined tracker's settings: every matcher threshold setting of `matcher_grid`, with each veto of
+/// 0 (off), 0.1, 0.2, 0.3, 0.4 and 0.5. Fixed in code, as section 6.10 of docs/DESIGN.md requires.
+pub fn combined_grid() -> Vec<(f64, f64, f64, f64)> {
+    let mut grid = Vec::new();
+    for (accept, margin, review) in matcher_grid() {
+        for veto in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5] {
+            grid.push((accept, margin, review, veto));
+        }
+    }
+    grid
+}
+
+/// What one case offers the combined tracker: the heuristic's choice, and for each candidate (in the order the
+/// candidates were given) its element index and the matcher's score.
+#[derive(Clone)]
+struct CaseOffer {
+    heuristic: Choice,
+    elements: Vec<u32>,
+    scores: Vec<f64>,
+}
+
+/// Pass one over the cases: asks the heuristic and the matcher once per case, and passes the heuristic's choice on.
+struct OfferRecorder<'a> {
+    matcher: &'a pw_model::Matcher,
+    cfg: Config,
+    seen: RefCell<Option<CaseOffer>>,
+}
+
+impl Chooser for OfferRecorder<'_> {
+    fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> PwResult<Choice> {
+        let heuristic = Heuristic { cfg: self.cfg }.choose(fp, candidates)?;
+        let anchor = pw_core::describe::fingerprint_text(fp);
+        let texts: Vec<String> = candidates.iter().map(|(el, _)| pw_core::describe::element_text(el)).collect();
+        let scores = self.matcher.score_many(&anchor, &texts)?;
+        let elements = candidates.iter().map(|(el, _)| el.index).collect();
+        *self.seen.borrow_mut() = Some(CaseOffer { heuristic, elements, scores });
+        Ok(heuristic)
+    }
+}
+
+/// The outcome a choice makes of a case, as `relocate` makes it. Only the fields the benchmark reads are set.
+fn outcome_of(choice: Choice, elements: &[u32]) -> Outcome {
+    let (status, element, confidence) = match choice {
+        Choice::Pick { index, confidence } => (Status::Relocated, elements.get(index).copied(), confidence),
+        Choice::Unsure => (Status::Ambiguous, None, 0.0),
+        Choice::Null => (Status::Broken, None, 0.0),
+    };
+    Outcome { status, element, confidence, top: Vec::new(), reason: String::new() }
+}
+
+/// One case, ready for any number of settings: its fixed outcome (fast path, or no candidates), or its offer.
+enum Prepared {
+    Fixed(Outcome),
+    Offer(CaseOffer),
+}
+
+/// The combined tracker under each (accept, margin, review, veto) setting, on the same cases. Pass one asks the
+/// heuristic and the matcher once per case. Every setting is then applied to those answers, so a grid costs one
+/// pass through the model.
+pub fn run_combined_grid(
+    sites: usize,
+    variants: usize,
+    seed: u64,
+    drift: Drift,
+    matcher: &pw_model::Matcher,
+    base: Config,
+    settings: &[(f64, f64, f64, f64)],
+) -> anyhow::Result<Vec<(Config, f64, Report)>> {
+    let all = cases(sites, variants, seed, drift)?;
+    let recorder = OfferRecorder { matcher, cfg: base, seen: RefCell::new(None) };
+    let mut prepared = Vec::with_capacity(all.len());
+    for case in &all {
+        let out = relocate::relocate(&case.anchor, &case.snap, &recorder, &base)?;
+        prepared.push(match recorder.seen.borrow_mut().take() {
+            Some(offer) => Prepared::Offer(offer),
+            None => Prepared::Fixed(out),
+        });
+    }
+    let mut out = Vec::with_capacity(settings.len());
+    for &(accept, margin, review, veto) in settings {
+        let cfg = Config { matcher_accept: accept, matcher_margin: margin, matcher_review: review, ..base };
+        let mut report = Report { sites, variants, ..Report::default() };
+        for (case, prep) in all.iter().zip(&prepared) {
+            let outcome = match prep {
+                Prepared::Fixed(fixed) => fixed.clone(),
+                Prepared::Offer(offer) => outcome_of(relocate::combined_choice(offer.heuristic, &offer.scores, &cfg, veto), &offer.elements),
+            };
+            score_base(&mut report, case, &outcome);
+        }
+        out.push((cfg, veto, report));
+    }
+    Ok(out)
+}
+
 /// As [`run_with_model`], at several confidence bars. The model is asked once per case. Its answer and the
 /// heuristic's are then replayed at each bar through the same routing as `ModelChooser` and `ModelFirst`,
 /// so the rows at a bar equal what `run_with_model` gives with `model_accept` set to that bar.
-pub fn run_sweep(sites: usize, variants: usize, seed: u64, model: &ModelChooser, accepts: &[f64]) -> anyhow::Result<Sweep> {
-    let cfg = Config::default();
+pub fn run_sweep(sites: usize, variants: usize, seed: u64, model: &ModelChooser, accepts: &[f64], cfg: Config) -> anyhow::Result<Sweep> {
     let heuristic = Heuristic { cfg };
     let mut report = Report { sites, variants, ..Report::default() };
     let mut bars: Vec<Bar> = accepts.iter().map(|&accept| Bar { accept, model: ModelRows::default() }).collect();
-    for case in cases(sites, variants, seed)? {
+    for case in cases(sites, variants, seed, Drift::Mixed)? {
         let outcome = relocate::relocate(&case.anchor, &case.snap, &heuristic, &cfg)?;
         score_base(&mut report, &case, &outcome);
         if bars.is_empty() {
@@ -320,9 +537,20 @@ mod tests {
     }
 
     #[test]
+    fn relocation_never_sees_the_gold_marker() {
+        for drift in [Drift::Mixed, Drift::Compound] {
+            for case in cases(6, 2, 11, drift).unwrap() {
+                assert!(case.snap.elements().iter().all(|e| !e.attrs.contains_key("data-pwgold")));
+                assert!(!case.anchor.fingerprint.attrs.contains_key("data-pwgold"));
+                assert!(case.gold.is_some() || case.snap.elements().len() > 0);
+            }
+        }
+    }
+
+    #[test]
     fn a_seed_always_gives_the_same_cases() {
-        let a = cases(12, 2, 9).unwrap();
-        let b = cases(12, 2, 9).unwrap();
+        let a = cases(12, 2, 9, Drift::Mixed).unwrap();
+        let b = cases(12, 2, 9, Drift::Mixed).unwrap();
         assert_eq!(a.len(), 24);
         for (x, y) in a.iter().zip(&b) {
             assert_eq!(x.gold, y.gold);
