@@ -41,6 +41,11 @@ struct Cli {
     /// synthetic benchmark it mis-matched deleted targets more often than the heuristic (docs/DESIGN.md, section 6.5).
     #[arg(long, global = true, value_name = "DIR")]
     model: Option<PathBuf>,
+    /// A matcher folder from `training/match.py`. The combined tracker uses it: the heuristic decides when it picks a
+    /// candidate, and the matcher decides when the heuristic is unsure or doubts its pick. Opt-in. The heuristic alone
+    /// stays the default, because the mixed-drift protocol did not adopt the combined tracker (docs/DESIGN.md, 6.10).
+    #[arg(long, global = true, value_name = "DIR")]
+    matcher: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -963,6 +968,10 @@ fn rewrites_or_publishes(cmd: &Cmd) -> bool {
 async fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     let actor = project::resolve_actor(cli.actor.as_deref());
+    if let Some(dir) = &cli.matcher {
+        project::install_matcher(dir)?;
+        eprintln!("note: combined tracker on (opt-in): the heuristic decides, the matcher decides when the heuristic is unsure");
+    }
     if let Some(dir) = &cli.model {
         project::install_model(dir)?;
         if rewrites_or_publishes(&cli.cmd) {

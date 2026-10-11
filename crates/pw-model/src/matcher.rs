@@ -104,6 +104,46 @@ impl MatcherChooser {
     }
 }
 
+/// The matcher alone as a chooser (experimental): its own thresholds decide, and the heuristic is not consulted.
+pub struct MatcherOnly<'a> {
+    pub matcher: &'a Matcher,
+    pub cfg: RelocateConfig,
+}
+
+impl Chooser for MatcherOnly<'_> {
+    fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<Choice> {
+        if candidates.is_empty() {
+            return Ok(Choice::Null);
+        }
+        let anchor = describe::fingerprint_text(fp);
+        let texts: Vec<String> = candidates.iter().map(|(el, _)| describe::element_text(el)).collect();
+        let scores = self.matcher.score_many(&anchor, &texts)?;
+        Ok(relocate::matcher_choice(&scores, &self.cfg))
+    }
+}
+
+/// The combined tracker as a chooser (docs/DESIGN.md, section 6.10): the heuristic decides when it picks a
+/// candidate, unless the matcher doubts the pick (probability below `veto`); the matcher decides when the heuristic
+/// is unsure. `cfg` carries the matcher thresholds. Opt-in: the heuristic alone stays the default.
+pub struct CombinedChooser<'a> {
+    pub matcher: &'a Matcher,
+    pub cfg: RelocateConfig,
+    pub veto: f64,
+}
+
+impl Chooser for CombinedChooser<'_> {
+    fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<Choice> {
+        let heuristic = relocate::Heuristic { cfg: self.cfg }.choose(fp, candidates)?;
+        if candidates.is_empty() || heuristic == Choice::Null {
+            return Ok(heuristic);
+        }
+        let anchor = describe::fingerprint_text(fp);
+        let texts: Vec<String> = candidates.iter().map(|(el, _)| describe::element_text(el)).collect();
+        let scores = self.matcher.score_many(&anchor, &texts)?;
+        Ok(relocate::combined_choice(heuristic, &scores, &self.cfg, self.veto))
+    }
+}
+
 impl Chooser for MatcherChooser {
     fn choose(&self, fp: &Fingerprint, candidates: &[(&Element, f64)]) -> Result<Choice> {
         if candidates.is_empty() {
