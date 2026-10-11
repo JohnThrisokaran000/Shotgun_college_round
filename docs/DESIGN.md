@@ -341,6 +341,24 @@ Adoption rule, applied in code (`/home/harshit/.cache/track/adopt.py`): (a) the 
 
 What this shows. The learned matcher helps on compound drift, where the heuristic has no answer, and the combined rule carries that gain over. On mixed drift the matcher's own wrong matches outweigh its gains, and the hyperparameter sweep moved the mixed-drift objective only a little (322 to 352 on seed 101). The bottleneck is the matcher's errors on mixed targets, not its size or its schedule. Fixing that needs better training pairs or a better features, which is the next step, and it needs a new pre-registered protocol before anyone claims it.
 
+### 6.11 Matcher with a lower positive weight: protocol, written before any test run (2026-10-11)
+
+Why. Section 6.10 found that the combined rule gains on compound drift and loses on mixed drift, because the matcher's own wrong matches on mixed targets outweigh its gains. The sweep in 6.10 tried positive weights of 2 and 4, both above 1. A weight below 1 makes a false pick cost more than a missed pick, so it should make the matcher refuse more often. This is the cheapest single change that targets the errors section 6.10 identified. It is a calibration change, not new training pairs or features.
+
+Candidate, matcher-v3. The matcher-demo recipe, which is `training/match.py` on `data/match` (seed 5001), learning rate 2e-4, batch 64, 6 epochs, vocabulary 6000, hidden 128, 4 layers, 4 heads, dropout 0.1, warm-up 0.05, maximum length 192, training seed 0, with the positive weight changed from 1 to 0.5 and nothing else. Trained on the laptop GPU.
+
+Data. Dev, used only to choose the relocation setting, as in 6.10: seed 101 (mixed) and seed 102 (compound), 300 sites and 3 variants each. Test, fresh and used for nothing else: mixed seeds 808 and 811, and compound seed 909, 300 sites and 3 variants each. Seeds 7, 202, 303, 404, 505, 606 and the training seed 5001 are not test seeds here.
+
+Choice. The relocation setting is the grid's selection on dev by the sum of the two objectives, as in 6.10. The grid writes it to `models/matcher-v3/selection.json`. It is not changed after the test runs.
+
+Objective. J = correct present minus five times (wrong present plus wrong deleted), as in 6.6 and 6.10.
+
+Baseline. The heuristic on the same test seeds, with `pw train bench` at 300 sites and 3 variants. The combined tracker is `pw train track --matcher models/matcher-v3`, which uses the recorded setting.
+
+Adoption rule, fixed now and the same as 6.10 on fresh seeds. The combined tracker with matcher-v3 becomes the default chooser only if all of these hold: (a) its objective is at least the heuristic's on 808 and on 811; (b) its present wrong matches do not exceed the heuristic's on 808 and 811; (c) its deleted wrong matches do not exceed the heuristic's on 808 and 811; (d) on 909 its correct rate is at least ten points above the heuristic's. Otherwise the matcher stays opt-in, and this section says so.
+
+Limits. A pass on synthetic drift does not show performance on real websites (section 8). If the rule fails, the result is reported as it is, and the matcher is not tuned again on these seeds.
+
 ## 7. Deviations from the plan and the brief
 
 1. **Model from scratch, architecture from a reference only.** Per the brief. The plan's Qwen fine-tune and its quality expectations do not apply. EmbeddingGemma-300M supplies the layer design only. Its weights and tokenizer are not used.
