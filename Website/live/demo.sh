@@ -283,6 +283,15 @@ step_doctor() {
   printf '%s\n' "Then run: $0 shell"
 }
 
+# The phone-friendly control panel (control.py): teammates press buttons, the steps run on this laptop.
+step_control() { exec python3 "$HERE/control.py" "$@"; }
+step_control_stop() {
+  local f="$RUN.control.pid"
+  if [ -f "$f" ]; then kill "$(cat "$f")" 2>/dev/null; rm -f "$f"; echo "control panel stopped"; else echo "no control panel running"; fi
+}
+# In the shared terminal: show every run started from the control panel, as it happens.
+step_watch() { touch "$RUN.control.log"; printf '%s\n' "${dim}# showing runs from the control panel (Ctrl+C to stop)${off}"; tail -n 0 -F "$RUN.control.log" 2>/dev/null; }
+
 step_down() {
   local f
   for f in "$RUN/proxy.pid" "$RUN/shop.pid"; do
@@ -314,6 +323,9 @@ usage() {
 PatchWork live demo (real pw binary, real Chromium). Order:
 
   doctor    check this laptop, rehearse the live minute out of sight, then stage it
+  control   phone control panel for the team (add --tunnel for a link that works anywhere)
+  control-stop   stop the control panel
+  watch     in the shared terminal: show runs started from the control panel
   stage     start everything and run it up to the live minute (before the 5-minute run)
   shell     a clean terminal for screen sharing: prompt "shop \$", no history
   up        start the shop on :$SHOP_PORT and the proxy on :$PROXY_PORT, snapshot the cart
@@ -341,6 +353,9 @@ EOF
 cmd=${1:-help}
 case "$cmd" in
   help|-h|--help) usage ;;
+  control) shift; step_control "$@" ;;
+  control-stop) step_control_stop ;;
+  watch) step_watch ;;
   doctor|stage|shell|up|edit|fix|check|preview|verify|review|ship|merge|waive|visitors|audit|tamper|restore|redesign|down|all|status) "step_$cmd" ;;
   *) echo "unknown step: $cmd"; usage; exit 1 ;;
 esac
